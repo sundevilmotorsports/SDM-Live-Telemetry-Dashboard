@@ -1,0 +1,4 @@
+websockets>=12.0
+# Optional for direct CAN bus decoding & DBC parsing:
+# cantools>=39.4.0
+# python-can>=4.3.0
