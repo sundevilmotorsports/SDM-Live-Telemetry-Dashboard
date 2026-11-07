@@ -4,8 +4,8 @@ import { useConfig, type ChartConfig, type DropTarget, type MathChannel } from '
 import type { Telemetry } from '../telemetry/useTelemetry'
 import { lapsFromFrames, lapsFromMarks, lapLength, bestLap, type LapSpan } from '../telemetry/laps'
 import {
-  buildView, clipSeries, frameAtX, fmtDuration, panRange, panY, scaleTicks, tracePath, viewBounds, zoomRange, zoomY,
-  FULL_Y, WINDOW_PRESETS_S, type ChartView, type RangeMode, type XRange, type YWindow,
+  buildView, clipSeries, inspectChart, fmtDuration, panRange, panY, scaleTicks, tracePath, viewBounds, zoomRange, zoomY,
+  FULL_Y, WINDOW_PRESETS_S, type ChartView, type ChartInspection, type RangeMode, type XRange, type YWindow,
 } from '../telemetry/chartView'
 import { useLapMarks } from '../hooks/useLapMarks'
 import { DraggableStack, type StackItem } from './DraggableStack'
@@ -128,7 +128,7 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
   const primary = view.series.find(s => s.role === 'primary') ?? null
   const latest = primary?.frames[primary.frames.length - 1]
   const crossX = crossFrac !== null ? range.xMin + clamp(crossFrac, 0, 1) * (range.xMax - range.xMin) : null
-  const crossFrame = crossX !== null && primary ? frameAtX(primary, crossX) : null
+  const inspection = inspectChart(view, range, crossFrac)
   const sample = latest ?? ({} as Frame)
   const zoomedY = yWin.lo !== 0 || yWin.hi !== 1
 
@@ -163,7 +163,7 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
         <div className="flex items-center gap-2 flex-wrap" style={{ minWidth: 0 }}>
           <span style={{ fontFamily: MONO, fontSize: 8, color: '#555', letterSpacing: '0.15em', flexShrink: 0 }} title="Drag the title bar to reorder charts">{chart.title}</span>
           {traces.map(({ trace, index, def, get }) => {
-            const frame = crossFrame ?? latest
+            const frame = inspection.frame
             const value = frame ? get(frame) : NaN
             let valueColor = trace.color
             if (trace.dangerAt != null && value >= trace.dangerAt) valueColor = '#ff3333'
@@ -173,7 +173,7 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
               <span key={index} className="flex items-center gap-1" style={{ opacity: trace.hidden ? 0.35 : dim ? 0.55 : 1 }}>
                 <button title={trace.hidden ? 'Show trace' : 'Hide trace'} onClick={() => onToggleHidden(index)}
                   style={{ width: 8, height: 8, borderRadius: 2, padding: 0, cursor: 'pointer', backgroundColor: trace.hidden ? 'transparent' : trace.color, border: `1px solid ${trace.color}` }} />
-                <span draggable title="Click to highlight · drag to another chart to regroup, or to a chart edge to split it out"
+                <span draggable title={def.description ?? 'Click to highlight · drag to another chart to regroup, or to a chart edge to split it out'}
                   onDragStart={e => { e.dataTransfer.setData(TRACE_MIME, JSON.stringify({ chartId, index })); e.dataTransfer.effectAllowed = 'move'; onDragState(true) }}
                   onDragEnd={() => onDragState(false)}
                   onClick={() => setHighlight(h => (h === index ? null : index))}
@@ -266,7 +266,7 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
 // ── Panel ─────────────────────────────────────────────────────────────────────
 type Zoom = { kind: 'live'; span: number } | { kind: 'fixed'; xMin: number; xMax: number } | null
 
-export function TimeSeriesPanel({ telemetry, syncCrosshair }: { telemetry: Telemetry; syncCrosshair: boolean }) {
+export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }: { telemetry: Telemetry; syncCrosshair: boolean; onInspectionChange?: (inspection: ChartInspection) => void }) {
   const cfg = useConfig()
   const { chartOrder, chartCfg, math, openConfig, setChartOrder, timeRange, setTimeRange, updateTrace, dropChannel, dropTrace } = cfg
   const { history } = telemetry
@@ -301,6 +301,10 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair }: { telemetry: Telem
     : zoom.kind === 'live' ? { xMin: bounds.xMax - zoom.span, xMax: bounds.xMax }
     : zoom
   const span = range.xMax - range.xMin
+  const inspection = inspectChart(view, range, crossFrac)
+  useEffect(() => {
+    onInspectionChange?.({ frame: inspection.frame, label: inspection.label, mode: inspection.mode })
+  }, [onInspectionChange, inspection.frame, inspection.label, inspection.mode])
 
   /** After a zoom/pan, keep following live data if the view touches the newest sample. */
   const commit = (r: XRange) => {

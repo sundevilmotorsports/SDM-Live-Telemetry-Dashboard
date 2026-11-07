@@ -8,6 +8,9 @@ import { TelemetryStatusProvider } from './state/TelemetryStatusContext'
 import { StatusBar } from './components/widgets'
 import { TimeSeriesPanel } from './components/TimeSeriesPanel'
 import { GaugePanel, SuspensionPanel, BottomPanel } from './components/panels'
+import SteeringPanel from './components/SteeringPanel'
+import FuelTank from './components/FuelTank'
+import type { ChartInspection } from './telemetry/chartView'
 import { NavBar, NavId } from './components/NavBar'
 import { SessionTimingPanel } from './components/SessionTimingPanel'
 import { WidgetConfigModal } from './components/WidgetConfigModal'
@@ -61,17 +64,21 @@ function supabaseBannerDetail(telemetry: Telemetry, supabaseUrl: string): string
   if (telemetry.freshness === 'stale') return 'No newer sample accepted within the stale window. Duplicate broadcasts do not refresh this.'
   return 'Joined. Broadcast does not replay history — waiting for the next group update.'
 }
-const WEIGHTS: Record<string, number> = { gauges: 35, suspension: 25, bottom: 40 }
-const WIDGET_TITLE: Record<string, string> = { gauges: 'INSTRUMENT GAUGES', suspension: 'SUSPENSION DAMPER', bottom: 'PEDAL · G-FORCE · GPS' }
+const WEIGHTS: Record<string, number> = { gauges: 30, steering: 20, suspension: 20, bottom: 30 }
+const WIDGET_TITLE: Record<string, string> = { gauges: 'INSTRUMENT GAUGES', steering: 'STEERING · FUEL', suspension: 'SUSPENSION DAMPER', bottom: 'PEDAL · G-FORCE · GPS' }
 
-function RightColumn({ frames }: { frames: Frame[] }) {
+function RightColumn({ frames, inspection }: { frames: Frame[]; inspection: ChartInspection | null }) {
   const { widgetOrder, setWidgetOrder, layout } = useConfig()
 
-  const visible = widgetOrder.filter(id => (id === 'suspension' ? layout.suspension : true))
+  const visible = widgetOrder.filter(id => id === 'steering' ? layout.steering || layout.fuel : id === 'suspension' ? layout.suspension : true)
   const hidden = widgetOrder.filter(id => !visible.includes(id))
 
   const render = (id: string) => {
     if (id === 'gauges') return <GaugePanel frames={frames} />
+    if (id === 'steering') return <div className="flex h-full min-h-0">
+      {layout.steering && <div className="flex-1 min-w-0"><SteeringPanel frames={frames} /></div>}
+      {layout.fuel && <div className="flex-1 min-w-0"><FuelTank inspection={inspection} /></div>}
+    </div>
     if (id === 'suspension') return <SuspensionPanel frames={frames} />
     return <BottomPanel frames={frames} />
   }
@@ -84,15 +91,16 @@ function RightColumn({ frames }: { frames: Frame[] }) {
 function Workspace({ frames, telemetry, cur }: { frames: Frame[]; telemetry: Telemetry; cur: Frame | undefined }) {
   const { layout, supabaseUrl, supabaseMode } = useConfig()
   const [timingOpen, setTimingOpen] = useState(true)
+  const [inspection, setInspection] = useState<ChartInspection | null>(null)
   const showTiming = layout.timing && timingOpen
   return (
     <div className="relative flex flex-1 overflow-hidden">
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col border-r border-[#242424]" style={{ flex: '0 0 50%' }}>
-          <TimeSeriesPanel telemetry={telemetry} syncCrosshair={layout.syncCrosshair} />
+          <TimeSeriesPanel telemetry={telemetry} syncCrosshair={layout.syncCrosshair} onInspectionChange={setInspection} />
         </div>
         <div className="flex flex-col" style={{ flex: '0 0 50%' }}>
-          <RightColumn frames={frames} />
+          <RightColumn frames={frames} inspection={inspection} />
         </div>
       </div>
       {showTiming && (

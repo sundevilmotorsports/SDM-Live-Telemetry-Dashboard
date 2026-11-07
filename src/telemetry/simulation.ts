@@ -1,3 +1,5 @@
+import { wheelReferenceSpeed, WHEEL_REFERENCE_DESCRIPTION } from './wheelSpeed'
+
 // ── Telemetry simulation: frames, channels, track geometry ──────────────────
 
 export const BUFFER = 180
@@ -75,6 +77,7 @@ export interface ChannelDef {
   max: number
   color: string
   get: (f: Frame) => number
+  description?: string
 }
 
 export const CHANNELS: ChannelDef[] = [
@@ -91,6 +94,7 @@ export const CHANNELS: ChannelDef[] = [
   { id: 'gX', label: 'G-Force Lat', unit: 'G', min: -3, max: 3, color: '#00ffff', get: f => f.gX },
   { id: 'gY', label: 'G-Force Long', unit: 'G', min: -3, max: 3, color: '#00ffaa', get: f => f.gY },
   { id: 'gear', label: 'Gear', unit: '', min: 0, max: 7, color: '#ffff00', get: f => f.gear },
+  { id: 'wheelRef', label: 'Wheel Reference (est.)', unit: 'km/h', min: 0, max: 240, color: '#ffffff', get: wheelReferenceSpeed, description: WHEEL_REFERENCE_DESCRIPTION },
   { id: 'wFL', label: 'Wheel Speed FL', unit: 'km/h', min: 0, max: 240, color: '#00ffff', get: f => f.wFL },
   { id: 'wFR', label: 'Wheel Speed FR', unit: 'km/h', min: 0, max: 240, color: '#00cccc', get: f => f.wFR },
   { id: 'wRL', label: 'Wheel Speed RL', unit: 'km/h', min: 0, max: 240, color: '#33ffee', get: f => f.wRL },

@@ -83,6 +83,8 @@ export interface MathChannel {
 }
 
 export interface LayoutFlags {
+  fuel: boolean
+  steering: boolean
   suspension: boolean
   timing: boolean
   gps: boolean
@@ -98,6 +100,7 @@ export interface ConfigState {
   chartOrder: string[]
   chartCfg: Record<string, ChartConfig>
   timeRange: TimeRangeConfig
+  wheelReferenceAdded?: boolean
   telemetrySource: TelemetrySource
   wsUrl: string
   supabaseUrl: string
@@ -130,6 +133,7 @@ const DEFAULT_CHART_CFG: Record<string, ChartConfig> = Object.fromEntries(
     traces: [
       { ...makeTrace(c.channel, c.color), min: c.min, max: c.max },
       ...(c.extra ?? []).map(e => ({ ...makeTrace(e.channel, e.color), min: c.min, max: c.max })),
+      ...(c.id === 'wheels' ? [makeTrace('wheelRef')] : []),
     ],
   }]),
 )
@@ -224,11 +228,12 @@ const DEFAULT: ConfigState = {
     { id: 'm1', name: 'Avg Wheel Spd', unit: 'km/h', expr: '(wFL + wFR + wRL + wRR) / 4' },
     { id: 'm2', name: 'Total G', unit: 'G', expr: 'sqrt(gX*gX + gY*gY)' },
   ],
-  layout: { suspension: true, timing: true, gps: true, syncCrosshair: true },
-  widgetOrder: ['gauges', 'suspension', 'bottom'],
+  layout: { fuel: true, steering: true, suspension: true, timing: true, gps: true, syncCrosshair: true },
+  widgetOrder: ['gauges', 'steering', 'suspension', 'bottom'],
   chartOrder: CHART_BASE.map(c => c.id),
   chartCfg: DEFAULT_CHART_CFG,
   timeRange: DEFAULT_TIME_RANGE,
+  wheelReferenceAdded: true,
   telemetrySource: 'simulation',
   wsUrl: 'ws://localhost:8765',
   supabaseUrl: envString('VITE_SUPABASE_URL'),
@@ -343,8 +348,21 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         if (saved.supabaseMode !== 'raw' && saved.supabaseMode !== 'broadcast') merged.supabaseMode = DEFAULT.supabaseMode
         if (!saved.staleAfterMs) merged.staleAfterMs = DEFAULT.staleAfterMs
         Object.assign(merged, normalizeCharts(saved.chartOrder ?? DEFAULT.chartOrder, saved.chartCfg ?? DEFAULT.chartCfg))
+        if (!saved.wheelReferenceAdded) {
+          const wheels = merged.chartCfg.wheels
+          if (wheels && wheels.traces.some(t => ['wFL', 'wFR', 'wRL', 'wRR'].includes(t.channel)) && !wheels.traces.some(t => t.channel === 'wheelRef')) {
+            merged.chartCfg.wheels = { ...wheels, traces: [...wheels.traces, makeTrace('wheelRef')] }
+          }
+        }
+        merged.wheelReferenceAdded = true
         merged.timeRange = normalizeTimeRange(saved.timeRange)
         merged.gauges = normalizeGauges(saved.gauges)
+        merged.layout = { ...DEFAULT.layout, ...saved.layout }
+        if (!merged.widgetOrder.includes('steering')) {
+          merged.widgetOrder = [...merged.widgetOrder]
+          const gaugesIndex = merged.widgetOrder.indexOf('gauges')
+          merged.widgetOrder.splice(gaugesIndex + 1, 0, 'steering')
+        }
         return merged
       }
     } catch { /* ignore */ }

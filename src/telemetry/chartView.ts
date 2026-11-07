@@ -174,6 +174,25 @@ export function frameAtX(series: ViewSeries, x: number, maxGapS = 1): Frame | nu
   return best && Math.abs(best.t - t) <= maxGapS ? best : null
 }
 
+export interface ChartInspection {
+  frame: Frame | null
+  label: string
+  mode: 'cursor' | 'view-end'
+}
+
+/** Shared sample for chart readouts and time-linked widgets; never use a ghost lap. */
+export function inspectChart(view: ChartView, range: XRange, crossFrac: number | null): ChartInspection {
+  const primary = view.series.find(series => series.role === 'primary')
+  const mode = crossFrac === null ? 'view-end' : 'cursor'
+  const result: ChartInspection = { frame: null, label: primary?.label ?? 'NO DATA', mode }
+  if (!primary?.frames.length) return result
+  const lastX = primary.frames[primary.frames.length - 1].t - primary.offset
+  const x = crossFrac === null ? Math.min(range.xMax, lastX)
+    : range.xMin + Math.max(0, Math.min(1, crossFrac)) * (range.xMax - range.xMin)
+  if (x < range.xMin || x > range.xMax) return result
+  return { ...result, frame: frameAtX(primary, x) }
+}
+
 /** Five evenly spaced scale labels for a trace's own min/max. */
 export function scaleTicks(min: number, max: number, count = 5): number[] {
   if (!Number.isFinite(min) || !Number.isFinite(max) || max === min) return [min]

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { MONO, CHANNELS, CHANNEL_MAP } from '../telemetry/simulation'
 import { isValidExpr } from '../telemetry/expression'
+import { WHEEL_REFERENCE_DESCRIPTION } from '../telemetry/wheelSpeed'
 import { useConfig, GaugeConfig, AlertRule, MathChannel, ConfigTarget, DEFAULT_STALE_MS, GAUGE_STYLES } from '../state/ConfigContext'
 import { useTelemetryStatus } from '../state/TelemetryStatusContext'
 import { DASHBOARD_FIELD_MAPPINGS, UNMAPPED_DASHBOARD_FIELDS, channelLabel, gpsPosition } from '../telemetry/live/mapToFrame'
@@ -121,6 +122,7 @@ export function WidgetConfigModal() {
             <ThresholdBar min={tr.min} max={tr.max} warnAt={tr.warnAt} dangerAt={tr.dangerAt} color={tr.color} />
           </div>
         ))}
+        {chart.traces.some(trace => trace.channel === 'wheelRef') && descriptor(WHEEL_REFERENCE_DESCRIPTION)}
         {chart.traces.length === 0 && descriptor('No traces yet. Add a channel below.')}
 
         <div className="flex flex-col gap-1">
@@ -233,7 +235,7 @@ export function WidgetConfigModal() {
   )
 
   const layoutEditor = (only?: (keyof typeof cfg.layout)[]) => {
-    const rows = ([['suspension', 'Show Suspension Panel'], ['timing', 'Show Session Timing'], ['gps', 'Show GPS Track Map'], ['syncCrosshair', 'Sync Crosshair']] as [keyof typeof cfg.layout, string][])
+    const rows = ([['fuel', 'Show Time-linked Fuel Tank'], ['steering', 'Show Steering Wheel'], ['suspension', 'Show Suspension Panel'], ['timing', 'Show Session Timing'], ['gps', 'Show GPS Track Map'], ['syncCrosshair', 'Sync Crosshair']] as [keyof typeof cfg.layout, string][])
       .filter(([k]) => !only || only.includes(k))
     return rows.map(([key, label]) => (
       <label key={key} className="flex items-center gap-2 cursor-pointer" onClick={() => cfg.setLayout({ ...cfg.layout, [key]: !cfg.layout[key] })}>

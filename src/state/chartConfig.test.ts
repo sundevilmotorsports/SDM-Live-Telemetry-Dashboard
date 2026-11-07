@@ -37,6 +37,7 @@ describe('normalizeCharts', () => {
     const { chartOrder, chartCfg } = normalizeCharts(undefined, 'nope')
     expect(chartOrder).toEqual(['throttle', 'brake', 'steering', 'wheels'])
     expect(chartCfg.steering.traces[0]).toMatchObject({ channel: 'steering', min: -90, max: 90 })
+    expect(chartCfg.wheels.traces.at(-1)).toMatchObject({ channel: 'wheelRef', color: '#ffffff', min: 0, max: 240 })
   })
 })
 
@@ -66,7 +67,7 @@ describe('applyDrop (drag-and-drop grouping)', () => {
 
   it('creates a new chart at the drop position, titled after the channel', () => {
     const s = applyDrop(state(), 'rpm', null, { kind: 'new', index: 1 })
-    expect(channels(s)).toEqual([['throttle'], ['rpm'], ['brake'], ['wFL', 'wFR', 'wRL', 'wRR']])
+    expect(channels(s)).toEqual([['throttle'], ['rpm'], ['brake'], ['wFL', 'wFR', 'wRL', 'wRR', 'wheelRef']])
     expect(s.chartCfg[s.chartOrder[1]].title).toBe('ENGINE RPM')
   })
 
@@ -83,14 +84,14 @@ describe('applyDrop (drag-and-drop grouping)', () => {
     const start = state()
     const wRL = start.chartCfg.wheels.traces[2]
     const s = applyDrop(start, 'wRL', { chartId: 'wheels', index: 2, trace: wRL }, { kind: 'new', index: 3 })
-    expect(channels(s)).toEqual([['throttle'], ['brake'], ['wFL', 'wFR', 'wRR'], ['wRL']])
+    expect(channels(s)).toEqual([['throttle'], ['brake'], ['wFL', 'wFR', 'wRR', 'wheelRef'], ['wRL']])
   })
 
   it('keeps the insertion point right when the emptied source chart sat above it', () => {
     const start = state()
     const t = start.chartCfg.throttle.traces[0]
     const s = applyDrop(start, 'throttle', { chartId: 'throttle', index: 0, trace: t }, { kind: 'new', index: 2 })
-    expect(channels(s)).toEqual([['brake'], ['throttle'], ['wFL', 'wFR', 'wRL', 'wRR']])
+    expect(channels(s)).toEqual([['brake'], ['throttle'], ['wFL', 'wFR', 'wRL', 'wRR', 'wheelRef']])
   })
 
   it('ignores dropping a trace back onto its own chart', () => {
