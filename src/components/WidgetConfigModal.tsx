@@ -1,12 +1,14 @@
 import { useState } from 'react'
-import { MONO, CHANNELS, CHANNEL_MAP, CHART_BASE_MAP } from '../telemetry/simulation'
+import { MONO, CHANNELS, CHANNEL_MAP } from '../telemetry/simulation'
 import { isValidExpr } from '../telemetry/expression'
-import { useConfig, GaugeConfig, AlertRule, MathChannel, ConfigTarget, DEFAULT_STALE_MS } from '../state/ConfigContext'
+import { useConfig, GaugeConfig, AlertRule, MathChannel, ConfigTarget, DEFAULT_STALE_MS, GAUGE_STYLES } from '../state/ConfigContext'
 import { useTelemetryStatus } from '../state/TelemetryStatusContext'
 import { DASHBOARD_FIELD_MAPPINGS, UNMAPPED_DASHBOARD_FIELDS, channelLabel, gpsPosition } from '../telemetry/live/mapToFrame'
 import type { ChannelState } from '../telemetry/live/types'
 import { LIVE_CHANNEL_MAP } from '../telemetry/live/channelSet1'
 import { publicHost } from '../telemetry/live/broadcastClient'
+import RawSourceDetails from './RawSourceDetails'
+import SessionControls from './SessionControls'
 
 const selectStyle: React.CSSProperties = { backgroundColor: '#1a1a1a', color: '#999', border: '1px solid #2e2e2e', fontFamily: MONO, fontSize: 9, padding: '4px 6px', borderRadius: 3, width: '100%', outline: 'none' }
 const labelStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.12em' }
@@ -39,9 +41,9 @@ function ThresholdBar({ min, max, warnAt, dangerAt, color }: { min: number; max:
   return <div className="rounded overflow-hidden" style={{ height: 8, background: `linear-gradient(to right, ${color}, ${color} ${Math.max(0, wPct - 5)}%, #ff8800 ${wPct}%, #ff8800 ${dPct}%, #ff3333 ${dPct}%)` }} />
 }
 
-function TITLE(target: ConfigTarget): string {
+function TITLE(target: ConfigTarget, chartTitle?: string): string {
   switch (target.kind) {
-    case 'chart': return `${(CHART_BASE_MAP[target.id]?.label ?? 'CHANNEL')} CONFIGURATION`
+    case 'chart': return `${chartTitle || 'CHART'} CONFIGURATION`
     case 'gauges': return 'INSTRUMENT GAUGES CONFIGURATION'
     case 'suspension': return 'SUSPENSION DAMPER CONFIGURATION'
     case 'pedal': return 'PEDAL / ELEC CONFIGURATION'
@@ -55,7 +57,7 @@ function TITLE(target: ConfigTarget): string {
 export function WidgetConfigModal() {
   const cfg = useConfig()
   const target = cfg.configTarget!
-  const [open, setOpen] = useState({ source: true, gauges: false, alerts: false, math: false, layout: false })
+  const [open, setOpen] = useState({ gauges: true, alerts: false, math: false, layout: false })
   const t = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
 
   const channelOpts = [
@@ -68,62 +70,71 @@ export function WidgetConfigModal() {
 
   // ── Per-target body ─────────────────────────────────────────────────────────
   const chartBody = (id: string) => {
-    const base = CHART_BASE_MAP[id]
-    if (!base) return null
-    const stored = cfg.chartCfg[id]
-    const c = {
-      channel: stored?.channel ?? base.channel,
-      color: stored?.color ?? base.color,
-      min: Number.isFinite(stored?.min) ? stored!.min : base.min,
-      max: Number.isFinite(stored?.max) ? stored!.max : base.max,
-      warnAt: stored?.warnAt ?? null,
-      dangerAt: stored?.dangerAt ?? null,
-    }
+    const chart = cfg.chartCfg[id]
+    if (!chart) return descriptor('This chart was removed.')
+    const small: React.CSSProperties = { ...selectStyle, padding: '3px 4px' }
+    const numOrNull = (v: string) => (v === '' ? null : Number(v))
     return (
       <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
-          <span style={labelStyle}>CHANNEL ASSIGNMENT</span>
-          <select style={selectStyle} value={c.channel} onChange={e => {
-            const ch = e.target.value; const def = ch.startsWith('math:') ? null : CHANNEL_MAP[ch]
-            cfg.updateChart(id, def ? { channel: ch, min: def.min, max: def.max } : { channel: ch })
-          }}>
+          <span style={labelStyle}>CHART TITLE</span>
+          <input value={chart.title} onChange={e => cfg.updateChart(id, { title: e.target.value.toUpperCase() })} style={selectStyle} />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <span style={labelStyle}>TRACES · EACH ON ITS OWN SCALE</span>
+          <span style={{ ...labelStyle, color: '#2e2e2e' }}>ON THE CHART: CLICK A NAME TO HIGHLIGHT IT · CLICK ITS DOT TO HIDE/SHOW</span>
+        </div>
+
+        {chart.traces.map((tr, i) => (
+          <div key={i} className="flex flex-col gap-1.5 rounded p-2" style={{ backgroundColor: '#131313', border: `1px solid ${tr.color}30`, borderLeft: `2px solid ${tr.color}` }}>
+            <div className="flex items-center gap-1.5">
+              <input type="color" value={tr.color} onChange={e => cfg.updateTrace(id, i, { color: e.target.value })}
+                style={{ width: 24, height: 20, padding: 0, border: '1px solid #2e2e2e', borderRadius: 3, background: 'none', cursor: 'pointer', flexShrink: 0 }} />
+              <select style={small} value={tr.channel} onChange={e => {
+                const ch = e.target.value; const def = ch.startsWith('math:') ? null : CHANNEL_MAP[ch]
+                cfg.updateTrace(id, i, def ? { channel: ch, min: def.min, max: def.max } : { channel: ch })
+              }}>
+                {channelOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <button title={tr.hidden ? 'Show' : 'Hide'} onClick={() => cfg.updateTrace(id, i, { hidden: !tr.hidden })} style={idBtn(tr.hidden ? '#555' : '#00ccff')}>{tr.hidden ? 'HIDDEN' : 'SHOWN'}</button>
+              <button title="Move up" disabled={i === 0} onClick={() => cfg.moveTrace(id, i, -1)} style={{ ...idBtn('#888'), opacity: i === 0 ? 0.3 : 1 }}>▲</button>
+              <button title="Move down" disabled={i === chart.traces.length - 1} onClick={() => cfg.moveTrace(id, i, 1)} style={{ ...idBtn('#888'), opacity: i === chart.traces.length - 1 ? 0.3 : 1 }}>▼</button>
+              <button title="Remove trace" onClick={() => cfg.removeTrace(id, i)} style={idBtn('#ff3333')}>✕</button>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {SWATCHES.map(sw => (
+                <button key={sw} onClick={() => cfg.updateTrace(id, i, { color: sw })}
+                  style={{ width: 13, height: 13, borderRadius: 2, backgroundColor: sw, border: tr.color.toLowerCase() === sw ? '2px solid #fff' : '1px solid #00000060', cursor: 'pointer' }} />
+              ))}
+            </div>
+            <div className="flex gap-1.5">
+              <div className="flex flex-col gap-0.5 flex-1"><span style={labelStyle}>MIN</span>
+                <input type="number" value={tr.min} onChange={e => cfg.updateTrace(id, i, { min: Number(e.target.value) })} style={small} /></div>
+              <div className="flex flex-col gap-0.5 flex-1"><span style={labelStyle}>MAX</span>
+                <input type="number" value={tr.max} onChange={e => cfg.updateTrace(id, i, { max: Number(e.target.value) })} style={small} /></div>
+              <div className="flex flex-col gap-0.5 flex-1"><span style={{ ...labelStyle, color: '#ff8800' }}>WARN ≥</span>
+                <input type="number" value={num(tr.warnAt)} placeholder="off" onChange={e => cfg.updateTrace(id, i, { warnAt: numOrNull(e.target.value) })} style={small} /></div>
+              <div className="flex flex-col gap-0.5 flex-1"><span style={{ ...labelStyle, color: '#ff3333' }}>DANGER ≥</span>
+                <input type="number" value={num(tr.dangerAt)} placeholder="off" onChange={e => cfg.updateTrace(id, i, { dangerAt: numOrNull(e.target.value) })} style={small} /></div>
+            </div>
+            <ThresholdBar min={tr.min} max={tr.max} warnAt={tr.warnAt} dangerAt={tr.dangerAt} color={tr.color} />
+          </div>
+        ))}
+        {chart.traces.length === 0 && descriptor('No traces yet. Add a channel below.')}
+
+        <div className="flex flex-col gap-1">
+          <span style={labelStyle}>+ ADD TRACE TO THIS CHART</span>
+          <select style={selectStyle} value="" onChange={e => { if (e.target.value) cfg.addTrace(id, e.target.value) }}>
+            <option value="">Choose a channel…</option>
             {channelOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <span style={labelStyle}>TRACE COLOR</span>
-          <div className="flex items-center gap-2">
-            <input type="color" value={c.color} onChange={e => cfg.updateChart(id, { color: e.target.value })}
-              style={{ width: 28, height: 22, padding: 0, border: '1px solid #2e2e2e', borderRadius: 3, background: 'none', cursor: 'pointer' }} />
-            <div className="flex flex-wrap gap-1">
-              {SWATCHES.map(s => (
-                <button key={s} onClick={() => cfg.updateChart(id, { color: s })}
-                  style={{ width: 16, height: 16, borderRadius: 3, backgroundColor: s, border: c.color.toLowerCase() === s ? '2px solid #fff' : '1px solid #00000060', cursor: 'pointer' }} />
-              ))}
-            </div>
-          </div>
-        </div>
+        <MathQuickAdd onAdd={mid => cfg.addTrace(id, `math:${mid}`)} />
 
-        <div className="flex gap-2">
-          <div className="flex flex-col gap-1 flex-1"><span style={labelStyle}>SCALE MIN</span>
-            <input type="number" value={c.min} onChange={e => cfg.updateChart(id, { min: Number(e.target.value) })} style={selectStyle} /></div>
-          <div className="flex flex-col gap-1 flex-1"><span style={labelStyle}>SCALE MAX</span>
-            <input type="number" value={c.max} onChange={e => cfg.updateChart(id, { max: Number(e.target.value) })} style={selectStyle} /></div>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <span style={labelStyle}>COLOR THRESHOLDS</span>
-          <div className="flex gap-2">
-            <div className="flex flex-col gap-1 flex-1"><span style={{ ...labelStyle, color: '#ff8800' }}>WARN ≥</span>
-              <input type="number" value={num(c.warnAt)} placeholder="off" onChange={e => cfg.updateChart(id, { warnAt: e.target.value === '' ? null : Number(e.target.value) })} style={selectStyle} /></div>
-            <div className="flex flex-col gap-1 flex-1"><span style={{ ...labelStyle, color: '#ff3333' }}>DANGER ≥</span>
-              <input type="number" value={num(c.dangerAt)} placeholder="off" onChange={e => cfg.updateChart(id, { dangerAt: e.target.value === '' ? null : Number(e.target.value) })} style={selectStyle} /></div>
-          </div>
-          <ThresholdBar min={c.min} max={c.max} warnAt={c.warnAt} dangerAt={c.dangerAt} color={c.color} />
-        </div>
-
-        <MathQuickAdd onAdd={mid => cfg.updateChart(id, { channel: `math:${mid}` })} />
+        <button onClick={() => { if (window.confirm(`Delete chart "${chart.title}"?`)) { cfg.removeChart(id); cfg.closeConfig() } }}
+          style={{ ...idBtn('#ff3333'), width: '100%', padding: '6px' }}>DELETE THIS CHART</button>
       </div>
     )
   }
@@ -142,6 +153,13 @@ export function WidgetConfigModal() {
           }}>
             {channelOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+          <div className="flex items-center gap-1">
+            <span style={{ ...labelStyle, marginRight: 4 }}>STYLE</span>
+            {GAUGE_STYLES.map(st => (
+              <button key={st.id} title={st.title} onClick={() => updateGauge(g.id, { style: st.id })}
+                style={{ ...idBtn(g.style === st.id ? '#4488ff' : '#555'), flex: 1, backgroundColor: g.style === st.id ? '#4488ff22' : 'transparent' }}>{st.label}</button>
+            ))}
+          </div>
           <div className="flex gap-2">
             <div className="flex flex-col gap-1 flex-1"><span style={labelStyle}>MIN</span>
               <input type="number" value={g.min} onChange={e => updateGauge(g.id, { min: Number(e.target.value) })} style={selectStyle} /></div>
@@ -157,7 +175,7 @@ export function WidgetConfigModal() {
           {(g.warnAt != null || g.dangerAt != null) && <ThresholdBar min={g.min} max={g.max} warnAt={g.warnAt} dangerAt={g.dangerAt} color={g.channel.startsWith('math:') ? '#c88bff' : CHANNEL_MAP[g.channel]?.color ?? '#00ccff'} />}
         </div>
       ))}
-      <button onClick={() => cfg.setGauges([...cfg.gauges, { id: `g${Date.now()}`, channel: 'coolant', min: 40, max: 130, warnAt: 105, dangerAt: 115 }])} style={{ ...idBtn('#4488ff'), width: '100%', padding: '6px' }}>+ ADD GAUGE</button>
+      <button onClick={() => cfg.setGauges([...cfg.gauges, { id: `g${Date.now()}`, channel: 'coolant', style: 'vbar', min: 40, max: 130, warnAt: 105, dangerAt: 115 }])} style={{ ...idBtn('#4488ff'), width: '100%', padding: '6px' }}>+ ADD GAUGE</button>
     </>
   )
 
@@ -231,7 +249,7 @@ export function WidgetConfigModal() {
 
   const sourceEditor = (
     <div className="flex flex-col gap-3">
-      {descriptor('Choose where telemetry data originates. Simulation and the local WebSocket bridge stay available. Supabase Broadcast receives decoded live updates directly — this app does not decode HTP or sign posts.')}
+      {descriptor('Choose where telemetry data originates. Supabase raw mode pulls CAN payloads and processes them here using the logger config. The previous decoded Broadcast mode remains available.')}
 
       {/* Mode Selector Cards */}
       <div className="grid grid-cols-3 gap-2">
@@ -288,7 +306,7 @@ export function WidgetConfigModal() {
             <div style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #4488ff', backgroundColor: cfg.telemetrySource === 'supabase' ? '#4488ff' : 'transparent' }} />
           </div>
           <span style={{ fontFamily: MONO, fontSize: 7, color: '#666', lineHeight: 1.4 }}>
-            Realtime Broadcast. Decoded JSON, ~1 Hz per group.
+            Raw CAN batches decoded locally, or legacy Broadcast.
           </span>
         </div>
       </div>
@@ -349,11 +367,11 @@ export function WidgetConfigModal() {
   else if (target.kind === 'suspension') body = <div className="flex flex-col gap-3">{descriptor('Damper-velocity histograms for all four corners (FL/FR/RL/RR), binned rebound←→bump in mm/s from the live buffer.')}{layoutEditor(['suspension'])}</div>
   else if (target.kind === 'pedal') body = <div className="flex flex-col gap-3">{descriptor('Throttle, brake and battery-voltage bar meters. Warn/danger banding is automatic on the top of each bar. Add a math channel to derive a custom pedal metric.')}<MathQuickAdd onAdd={() => cfg.closeConfig()} /></div>
   else if (target.kind === 'gforce') body = <div className="flex flex-col gap-3">{descriptor('Lateral vs longitudinal G friction circle with a fading trail (last 70 samples). Ring scale fixed at 1G / 2G / 3G.')}<MathQuickAdd onAdd={() => cfg.closeConfig()} /></div>
-  else if (target.kind === 'gps') body = <div className="flex flex-col gap-3">{descriptor('Circuit map with sector markers (S2/S3) and the start/finish line. The car follows measured lap fraction, not raw latitude/longitude.')}{cfg.telemetrySource === 'supabase' && descriptor('SDM26-cell-v1 has no lap time. GPS arrives as lat/lon reference plus delta and is listed in the source inspector; it does not move this map.')}{layoutEditor(['gps'])}</div>
+  else if (target.kind === 'gps') body = <div className="flex flex-col gap-3">{descriptor('Circuit map with sector markers (S2/S3) and the start/finish line. The car follows measured lap fraction, not raw latitude/longitude.')}{cfg.telemetrySource === 'supabase' && descriptor(cfg.supabaseMode === 'raw' ? 'Raw CAN batches do not establish lap timing or GPS position. This map does not infer a vehicle position.' : 'SDM26-cell-v1 has no lap time. GPS arrives as lat/lon reference plus delta and is listed in the source inspector; it does not move this map.')}{layoutEditor(['gps'])}</div>
   else if (target.kind === 'source') body = sourceEditor
   else body = (
     <div className="flex flex-col gap-2">
-      <Section title="TELEMETRY SOURCE & NETWORK" open={open.source} onToggle={() => t('source')}>{sourceEditor}</Section>
+
       <Section title="CUSTOMIZE GAUGES" open={open.gauges} onToggle={() => t('gauges')}>{gaugeEditor}</Section>
       <Section title="ALERTS & WARNINGS" open={open.alerts} onToggle={() => t('alerts')}>{alertEditor}</Section>
       <Section title="MATH CHANNELS" open={open.math} onToggle={() => t('math')}>{mathEditor}</Section>
@@ -373,7 +391,7 @@ export function WidgetConfigModal() {
               <circle cx="6" cy="6" r="2" stroke="#4488ff" strokeWidth="0.9" />
               {[0, 45, 90, 135, 180, 225, 270, 315].map(d => { const r = (d * Math.PI) / 180; return <line key={d} x1={6 + 2.7 * Math.cos(r)} y1={6 + 2.7 * Math.sin(r)} x2={6 + 4.2 * Math.cos(r)} y2={6 + 4.2 * Math.sin(r)} stroke="#4488ff" strokeWidth="1.2" strokeLinecap="round" /> })}
             </svg>
-            <span style={{ fontFamily: MONO, fontSize: 9, color: '#4488ff', letterSpacing: '0.2em', fontWeight: 700 }}>{TITLE(target)}</span>
+            <span style={{ fontFamily: MONO, fontSize: 9, color: '#4488ff', letterSpacing: '0.2em', fontWeight: 700 }}>{TITLE(target, target.kind === 'chart' ? cfg.chartCfg[target.id]?.title : undefined)}</span>
           </div>
           <button onClick={cfg.closeConfig} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontFamily: MONO, fontSize: 15 }}>✕</button>
         </div>
@@ -384,7 +402,7 @@ export function WidgetConfigModal() {
         {/* footer */}
         <div className="flex items-center gap-2 px-4 py-3 border-t border-[#242424]" style={{ flexShrink: 0, backgroundColor: '#0f0f0f' }}>
           {target.kind === 'all' && (
-            <button onClick={cfg.reset} style={{ fontFamily: MONO, fontSize: 8, color: '#ff6644', backgroundColor: '#ff664410', border: '1px solid #ff664430', padding: '9px 12px', borderRadius: 5, cursor: 'pointer', letterSpacing: '0.15em', flexShrink: 0 }}>RESET</button>
+            <button onClick={cfg.reset} title="Reset dashboard customization without changing telemetry connections" style={{ fontFamily: MONO, fontSize: 8, color: '#ff6644', backgroundColor: '#ff664410', border: '1px solid #ff664430', padding: '9px 12px', borderRadius: 5, cursor: 'pointer', letterSpacing: '0.15em', flexShrink: 0 }}>RESET</button>
           )}
           <button onClick={cfg.closeConfig} style={{ fontFamily: MONO, fontSize: 10, color: '#fff', background: 'linear-gradient(135deg, #4488ff, #2266dd)', border: 'none', padding: '10px', borderRadius: 5, cursor: 'pointer', letterSpacing: '0.2em', flex: 1, fontWeight: 700, boxShadow: '0 0 16px #4488ff44' }}>
             SAVE &amp; APPLY
@@ -433,19 +451,29 @@ function SupabaseSourcePanel() {
   const telemetry = useTelemetryStatus()
   const diag = telemetry?.source === 'supabase' ? telemetry.diagnostics : null
   const age = diag?.lastAcceptedMs == null ? null : Date.now() - diag.lastAcceptedMs
+  const raw = cfg.supabaseMode === 'raw'
 
   return (
     <div className="flex flex-col gap-2 p-2.5 rounded" style={{ backgroundColor: '#131313', border: '1px solid #222' }}>
-      <span style={labelStyle}>SUPABASE REALTIME BROADCAST</span>
-      <span style={{ fontFamily: MONO, fontSize: 7, color: '#555', lineHeight: 1.5 }}>
-        Topic telemetry:live:&lt;session&gt;, event live. Publishable or anon key only. Do not paste a service-role key, a secret key, or TELEMETRY_HMAC_KEY. Switching session clears merged samples.
+      <span style={labelStyle}>SUPABASE INPUT MODE</span>
+      <select value={cfg.supabaseMode} onChange={e => cfg.setSupabaseMode(e.target.value === 'broadcast' ? 'broadcast' : 'raw')} style={selectStyle}>
+        <option value="raw">Raw CAN batches · process in this app</option>
+        <option value="broadcast">Legacy decoded Realtime Broadcast</option>
+      </select>
+      <span style={{ fontFamily: MONO, fontSize: 8, color: '#888', lineHeight: 1.5 }}>
+        {raw ? 'Polls telemetry.can_batches for the linked session (sign-in required). Switching session or input mode clears merged samples.' : 'Topic telemetry:live:<session>, event live. Switching session clears merged samples.'}
+        {' '}Publishable or anon key only. Never paste a service-role key, secret key, or TELEMETRY_HMAC_KEY.
       </span>
       <label style={labelStyle}>PROJECT URL</label>
       <input value={cfg.supabaseUrl} onChange={e => cfg.setSupabaseUrl(e.target.value)} placeholder="https://YOUR_PROJECT.supabase.co" style={{ ...selectStyle, fontSize: 9 }} />
       <label style={labelStyle}>PUBLISHABLE / ANON KEY</label>
       <input type="password" value={cfg.supabaseAnonKey} onChange={e => cfg.setSupabaseAnonKey(e.target.value)} placeholder="sb_publishable_… or anon JWT" autoComplete="off" style={{ ...selectStyle, fontSize: 9 }} />
-      <label style={labelStyle}>SESSION UUID</label>
-      <input value={cfg.telemetrySessionId} onChange={e => cfg.setTelemetrySessionId(e.target.value)} placeholder="00000000-0000-4000-8000-000000000000" style={{ ...selectStyle, fontSize: 9 }} />
+      {raw
+        ? <SessionControls />
+        : <>
+            <label style={labelStyle}>SESSION UUID</label>
+            <input value={cfg.telemetrySessionId} onChange={e => cfg.setTelemetrySessionId(e.target.value)} placeholder="00000000-0000-4000-8000-000000000000" style={{ ...selectStyle, fontSize: 9 }} />
+          </>}
       <label style={labelStyle}>STALE AFTER (MS)</label>
       <input
         value={String(cfg.staleAfterMs)}
@@ -456,9 +484,10 @@ function SupabaseSourcePanel() {
         style={{ ...selectStyle, fontSize: 9 }}
       />
       <span style={{ fontFamily: MONO, fontSize: 7, color: '#444' }}>
-        Default {DEFAULT_STALE_MS} ms. Groups broadcast about once per second, not at their 10 Hz sample rate. Host: {publicHost(cfg.supabaseUrl)}
+        Default {DEFAULT_STALE_MS} ms. {raw ? 'Polls every second; loads the whole session oldest-first, then catches up by batch ID. Charts resample to 10 Hz by frame ts_ms and play back about 2 s behind the newest sample. Freshness uses database receipt time.' : 'Groups broadcast about once per second, not at their 10 Hz sample rate.'} Host: {publicHost(cfg.supabaseUrl)}
       </span>
 
+      {raw ? <RawSourceDetails /> : <>
       <div className="mt-1 p-2 rounded flex flex-col gap-1" style={{ backgroundColor: '#0c0c0c', border: '1px solid #1a1a1a' }}>
         <span style={labelStyle}>DIAGNOSTICS</span>
         <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#777', lineHeight: 1.55 }}>
@@ -503,6 +532,7 @@ function SupabaseSourcePanel() {
           {telemetry && telemetry.channelReadings.length > 0 && <GpsInspection readings={telemetry.channelReadings} />}
         </div>
       </div>
+      </>}
     </div>
   )
 }

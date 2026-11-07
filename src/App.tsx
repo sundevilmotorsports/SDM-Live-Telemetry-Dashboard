@@ -1,12 +1,14 @@
-import { useState } from 'react'
-import { frameScope } from './telemetry/simulation'
+import { useMemo, useState } from 'react'
+import { evaluateAlerts } from './telemetry/alerts'
+import TelemetryAlerts from './components/TelemetryAlerts'
 import { useTelemetry } from './telemetry/useTelemetry'
-import { evalExpr, isValidExpr } from './telemetry/expression'
-import { ConfigProvider, useConfig, TelemetrySource } from './state/ConfigContext'
+
+import { ConfigProvider, useConfig } from './state/ConfigContext'
 import { TelemetryStatusProvider } from './state/TelemetryStatusContext'
-import { StatusBar, LeftPanel, ActiveAlert } from './components/widgets'
+import { StatusBar } from './components/widgets'
+import { TimeSeriesPanel } from './components/TimeSeriesPanel'
 import { GaugePanel, SuspensionPanel, BottomPanel } from './components/panels'
-import { NavSidebar, NavId } from './components/NavSidebar'
+import { NavBar, NavId } from './components/NavBar'
 import { SessionTimingPanel } from './components/SessionTimingPanel'
 import { WidgetConfigModal } from './components/WidgetConfigModal'
 import { DraggableStack, StackItem } from './components/DraggableStack'
@@ -17,7 +19,7 @@ import { publicHost } from './telemetry/live/broadcastClient'
 import type { Telemetry } from './telemetry/useTelemetry'
 
 const TOTAL_LAPS = 25
-const SOURCE_CYCLE: TelemetrySource[] = ['simulation', 'websocket', 'supabase']
+
 
 function SourceBanner({ color, title, detail }: { color: string; title: string; detail: string }) {
   return (
@@ -80,14 +82,14 @@ function RightColumn({ frames }: { frames: Frame[] }) {
 }
 
 function Workspace({ frames, telemetry, cur }: { frames: Frame[]; telemetry: Telemetry; cur: Frame | undefined }) {
-  const { layout, supabaseUrl } = useConfig()
+  const { layout, supabaseUrl, supabaseMode } = useConfig()
   const [timingOpen, setTimingOpen] = useState(true)
   const showTiming = layout.timing && timingOpen
   return (
     <div className="relative flex flex-1 overflow-hidden">
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col border-r border-[#242424]" style={{ flex: '0 0 50%' }}>
-          <LeftPanel frames={frames} syncCrosshair={layout.syncCrosshair} />
+          <TimeSeriesPanel telemetry={telemetry} syncCrosshair={layout.syncCrosshair} />
         </div>
         <div className="flex flex-col" style={{ flex: '0 0 50%' }}>
           <RightColumn frames={frames} />
@@ -124,8 +126,18 @@ function Workspace({ frames, telemetry, cur }: { frames: Frame[]; telemetry: Tel
       {telemetry.source === 'supabase' && telemetry.freshness !== 'fresh' && (
         <SourceBanner
           color={telemetry.connectionStatus === 'subscribed' ? '#ffaa00' : telemetry.connectionStatus === 'error' || telemetry.connectionStatus === 'misconfigured' ? '#ff3333' : '#ffaa00'}
-          title={supabaseBannerTitle(telemetry.connectionStatus, telemetry.freshness)}
-          detail={supabaseBannerDetail(telemetry, supabaseUrl)}
+          title={supabaseMode === 'raw'
+            ? telemetry.connectionStatus === 'misconfigured' ? 'RAW TELEMETRY NOT CONFIGURED'
+              : telemetry.connectionStatus === 'error' ? 'RAW BATCH READ ERROR'
+              : telemetry.connectionStatus !== 'connected' ? 'CONNECTING TO RAW TELEMETRY'
+              : telemetry.freshness === 'stale' ? 'RAW TELEMETRY · HISTORICAL OR STALE'
+              : 'RAW TELEMETRY · NO CONFIGURED SAMPLES'
+            : supabaseBannerTitle(telemetry.connectionStatus, telemetry.freshness)}
+          detail={supabaseMode === 'raw'
+            ? telemetry.diagnostics?.lastError ?? (telemetry.freshness === 'stale'
+              ? 'Showing stored samples, not a fresh vehicle feed. No synthetic values or laps are generated.'
+              : 'Reading telemetry.can_batches for the linked session. Sign in, start or pick a session, and check that the car is posting; unknown CAN IDs do not populate gauges.')
+            : supabaseBannerDetail(telemetry, supabaseUrl)}
         />
       )}
     </div>
@@ -139,30 +151,25 @@ function Dashboard() {
   const cfg = useConfig()
   const [activeNav, setActiveNav] = useState<NavId>('workspace')
 
-  const scope = cur ? frameScope(cur) : {}
-  const activeAlerts: ActiveAlert[] = cur
-    ? cfg.alerts.filter(a => a.enabled && isValidExpr(a.expr) && evalExpr(a.expr, scope) >= 1)
-      .map(a => ({ id: a.id, severity: a.severity, message: a.message }))
-    : []
+  const activeAlerts = useMemo(() => evaluateAlerts(cur, cfg.alerts, cfg.chartCfg, cfg.math), [cur, cfg.alerts, cfg.chartCfg, cfg.math])
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e1e] overflow-hidden select-none">
+    <div className="relative flex flex-col h-full bg-[#1e1e1e] overflow-hidden select-none">
       <StatusBar
         cur={cur}
-        alerts={activeAlerts}
+
         connectionStatus={telemetry.connectionStatus}
         packetRate={telemetry.packetRate}
         source={telemetry.source}
+        supabaseMode={cfg.supabaseMode}
         freshness={telemetry.freshness}
-        onToggleSource={() => {
-          const i = SOURCE_CYCLE.indexOf(telemetry.source)
-          cfg.setTelemetrySource(SOURCE_CYCLE[(i + 1) % SOURCE_CYCLE.length])
-        }}
+
         onOpenConfig={() => cfg.openConfig({ kind: 'source' })}
       />
+      <TelemetryAlerts key={`${telemetry.source}:${cfg.supabaseMode}:${cfg.telemetrySessionId}`} alerts={activeAlerts} sessionTime={cur?.t ?? NaN}>
       <TelemetryStatusProvider value={telemetry}>
+      <NavBar active={activeNav} onSelect={setActiveNav} settingsOpen={cfg.configTarget?.kind === 'all'} onSettings={() => cfg.configTarget?.kind === 'all' ? cfg.closeConfig() : cfg.openConfig({ kind: 'all' })} />
       <div className="flex flex-1 overflow-hidden" style={{ position: 'relative' }}>
-        <NavSidebar active={activeNav} onSelect={setActiveNav} settingsOpen={cfg.configTarget?.kind === 'all'} onSettings={() => cfg.configTarget?.kind === 'all' ? cfg.closeConfig() : cfg.openConfig({ kind: 'all' })} />
         {activeNav === 'workspace' && <Workspace frames={frames} telemetry={telemetry} cur={cur} />}
         {activeNav === 'dash' && <div className="flex-1 overflow-hidden"><DriverDash frames={frames} bestLap={telemetry.bestLap} /></div>}
         {activeNav === 'lap' && (
@@ -173,6 +180,7 @@ function Dashboard() {
         {cfg.configTarget && <WidgetConfigModal />}
       </div>
       </TelemetryStatusProvider>
+      </TelemetryAlerts>
     </div>
   )
 }

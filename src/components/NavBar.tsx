@@ -52,43 +52,32 @@ const SettingsIcon = (
   </svg>
 )
 
-function NavButton({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) {
+function NavTab({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} title={label} className="flex items-center justify-center rounded transition-all"
+    <button onClick={onClick} title={label} className="flex items-center gap-1.5 transition-colors"
       style={{
-        width: 36, height: 36, color: active ? '#4488ff' : '#444',
-        backgroundColor: active ? '#4488ff18' : 'transparent',
-        border: active ? '1px solid #4488ff33' : '1px solid transparent', cursor: 'pointer',
+        height: '100%', padding: '0 12px', cursor: 'pointer', background: active ? '#4488ff12' : 'transparent',
+        color: active ? '#4488ff' : '#555', border: 'none', borderBottom: `2px solid ${active ? '#4488ff' : 'transparent'}`,
       }}
-      onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#888' }}
-      onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#444' }}>
-      {children}
+      onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#999' }}
+      onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#555' }}>
+      <span className="flex items-center" style={{ transform: 'scale(0.8)' }}>{children}</span>
+      <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.18em', whiteSpace: 'nowrap' }}>{label.toUpperCase()}</span>
     </button>
   )
 }
 
-export function NavSidebar({ active, onSelect, settingsOpen, onSettings }: {
+/** Top navigation bar (views on the left, settings on the right), like a desktop analysis app's toolbar. */
+export function NavBar({ active, onSelect, settingsOpen, onSettings }: {
   active: NavId; onSelect: (id: NavId) => void; settingsOpen: boolean; onSettings: () => void
 }) {
   return (
-    <div className="flex flex-col items-center border-r border-[#1e1e1e] bg-[#111111]" style={{ width: 48, flexShrink: 0 }}>
-      <div className="flex items-center justify-center border-b border-[#1e1e1e]" style={{ height: 28, width: '100%' }}>
-        <div style={{ width: 20, height: 20, borderRadius: 4, background: 'linear-gradient(135deg, #4488ff, #0044cc)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ fontFamily: MONO, fontSize: 9, color: '#fff', fontWeight: 700 }}>T</span>
-        </div>
-      </div>
-      <div className="flex flex-col items-center gap-1 pt-2 w-full px-1">
-        {NAV_ITEMS.map(item => (
-          <NavButton key={item.id} active={active === item.id} label={item.label} onClick={() => onSelect(item.id)}>{item.icon}</NavButton>
-        ))}
-        <div style={{ width: 24, height: 1, backgroundColor: '#1e1e1e', margin: '4px 0' }} />
-        <NavButton active={settingsOpen} label="Settings" onClick={onSettings}>{SettingsIcon}</NavButton>
-      </div>
+    <nav className="flex items-stretch border-b border-[#1e1e1e] bg-[#111111]" style={{ height: 28, flexShrink: 0 }}>
+      {NAV_ITEMS.map(item => (
+        <NavTab key={item.id} active={active === item.id} label={item.label} onClick={() => onSelect(item.id)}>{item.icon}</NavTab>
+      ))}
       <div className="flex-1" />
-      <div className="pb-3 flex flex-col items-center gap-0.5">
-        <div style={{ width: 4, height: 4, borderRadius: '50%', backgroundColor: '#00ff41', boxShadow: '0 0 6px #00ff41' }} />
-        <span style={{ fontFamily: MONO, fontSize: 6, color: '#2a2a2a', writingMode: 'vertical-lr', letterSpacing: '0.2em' }}>LIVE</span>
-      </div>
-    </div>
+      <NavTab active={settingsOpen} label="Settings" onClick={onSettings}>{SettingsIcon}</NavTab>
+    </nav>
   )
 }

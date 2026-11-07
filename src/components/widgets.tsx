@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import {
-  Frame, MONO, BUFFER, HZ, clamp, fmtTime, fmtNum, CHANNEL_MAP, CHART_BASE_MAP, ChannelDef, frameScope,
+  Frame, MONO, clamp, fmtTime, fmtNum, CHANNEL_MAP, ChannelDef, frameScope,
   TRACK_PATH, TRACK_WP, S1_IDX, S2_IDX, interpolateTrack,
 } from '../telemetry/simulation'
-import { MathChannel, useConfig } from '../state/ConfigContext'
+import { MathChannel, type SupabaseMode } from '../state/ConfigContext'
 import { evalExpr } from '../telemetry/expression'
-import { DraggableStack, StackItem } from './DraggableStack'
 
 // Resolve any channel/math id to a value + display metadata for the given frame
 export function resolveChannel(id: string, f: Frame, math: MathChannel[]): { value: number; def: Omit<ChannelDef, 'get'> } {
@@ -52,138 +51,6 @@ export function WidgetControls({ onConfig }: { onConfig?: () => void }) {
 }
 
 // ── Time Series Chart ────────────────────────────────────────────────────────
-export interface ChartDef {
-  label: string; unit: string; min: number; max: number
-  getValue: (f: Frame) => number
-  color: string
-  gridTicks: number[]
-  extraValues?: { get: (f: Frame) => number; color: string }[]
-}
-
-export function Chart({ frames, getValue, color, label, unit, min, max, crosshairFrac, gridTicks, extraValues, warningAt, dangerAt, onConfig }:
-  ChartDef & { frames: Frame[]; crosshairFrac: number | null; warningAt?: number | null; dangerAt?: number | null; onConfig?: () => void }) {
-  const W = 800, H = 100
-  const span = max - min || 1
-  const toY = (v: number) => (Number.isFinite(v) ? clamp(H - ((v - min) / span) * H, 0, H) : H)
-  const fid = `gf${label.replace(/\W/g, '')}`
-  const makePath = (getter: (f: Frame) => number) => {
-    if (frames.length < 2) return ''
-    let pen = false
-    const parts: string[] = []
-    frames.forEach((f, i) => {
-      const v = getter(f)
-      if (!Number.isFinite(v)) { pen = false; return }
-      const x = ((i / (frames.length - 1)) * W).toFixed(1)
-      parts.push(`${pen ? 'L' : 'M'} ${x} ${toY(v).toFixed(1)}`)
-      pen = true
-    })
-    return parts.join(' ')
-  }
-  const current = frames.length ? getValue(frames[frames.length - 1]) : NaN
-  const currentKnown = Number.isFinite(current)
-  const crossIdx = crosshairFrac !== null ? Math.round(clamp(crosshairFrac, 0, 1) * (frames.length - 1)) : null
-  const crossVal = crossIdx !== null && frames[crossIdx] ? getValue(frames[crossIdx]) : null
-  let valColor = color
-  if (dangerAt != null && current >= dangerAt) valColor = '#ff3333'
-  else if (warningAt != null && current >= warningAt) valColor = '#ff8800'
-
-  return (
-    <div className="flex flex-col border-b border-[#242424] last:border-b-0" style={{ flex: 1 }}>
-      <div className="panel-drag flex items-center justify-between px-2 border-b border-[#1c1c1c] bg-[#151515]" style={{ height: 19, cursor: 'grab', touchAction: 'none' }}>
-        <div className="flex items-center gap-1.5">
-          <div style={{ width: 14, height: 2, backgroundColor: color, opacity: 0.85 }} />
-          <span style={{ fontFamily: MONO, fontSize: 9, color, letterSpacing: '0.15em', opacity: 0.9 }}>{label}</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {crossVal !== null && Number.isFinite(crossVal) && <span style={{ fontFamily: MONO, fontSize: 8, color: '#4a4a4a' }}>{crossVal.toFixed(1)} {unit}</span>}
-          <span style={{ fontFamily: MONO, fontSize: 12, color: currentKnown ? valColor : '#555', fontWeight: 700 }}>
-            {fmtNum(current, 1)}<span style={{ color: '#3a3a3a', fontSize: 9, marginLeft: 2 }}>{currentKnown ? unit : 'N/A'}</span>
-          </span>
-          <WidgetControls onConfig={onConfig} />
-        </div>
-      </div>
-      <div className="relative flex-1 overflow-hidden bg-[#191919]">
-        <svg className="absolute inset-0 w-full h-full" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-          <defs>
-            <filter id={fid} x="-20%" y="-20%" width="140%" height="140%">
-              <feGaussianBlur stdDeviation="2" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-          </defs>
-          {gridTicks.map(v => {
-            const y = toY(v)
-            return (
-              <g key={v}>
-                <line x1={0} y1={y} x2={W} y2={y} stroke={v === 0 ? '#2c2c2c' : '#202020'} strokeWidth={v === 0 ? '1.5' : '0.5'} />
-                <text x={6} y={Math.max(10, y - 3)} fontSize="7" fill="#282828" fontFamily="monospace">{v}</text>
-              </g>
-            )
-          })}
-          {extraValues?.map((ev, i) => <path key={i} d={makePath(ev.get)} fill="none" stroke={ev.color} strokeWidth="0.8" opacity="0.5" />)}
-          <path d={makePath(getValue)} fill="none" stroke={color} strokeWidth="1.5" filter={`url(#${fid})`} />
-          {crosshairFrac !== null && <line x1={crosshairFrac * W} y1={0} x2={crosshairFrac * W} y2={H} stroke="#ffffff" strokeWidth="0.6" opacity="0.2" strokeDasharray="4 4" />}
-          {currentKnown && <rect x={W - 2} y={clamp(toY(current) - 5, 0, H - 10)} width="3" height="10" fill={color} opacity="0.9" />}
-        </svg>
-      </div>
-    </div>
-  )
-}
-
-// ── Left Panel ────────────────────────────────────────────────────────────────
-export function LeftPanel({ frames, syncCrosshair }: { frames: Frame[]; syncCrosshair: boolean }) {
-  const [crossX, setCrossX] = useState<number | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-  const { chartOrder, chartCfg, math, openConfig, setChartOrder } = useConfig()
-
-  const items: StackItem[] = (chartOrder.map(id => {
-    const base = CHART_BASE_MAP[id]
-    if (!base) return null
-    const stored = chartCfg[id]
-    const cfg = {
-      channel: stored?.channel ?? base.channel,
-      color: stored?.color ?? base.color,
-      min: Number.isFinite(stored?.min) ? stored!.min : base.min,
-      max: Number.isFinite(stored?.max) ? stored!.max : base.max,
-      warnAt: stored?.warnAt ?? null,
-      dangerAt: stored?.dangerAt ?? null,
-    }
-    const { def } = resolveChannel(cfg.channel, frames[frames.length - 1] ?? ({} as Frame), math)
-    const extraValues = base.extra?.map(e => ({ get: (f: Frame) => (CHANNEL_MAP[e.channel]?.get(f) ?? 0), color: e.color }))
-    return {
-      id, title: base.label, weight: 1,
-      node: (
-        <Chart
-          frames={frames} crosshairFrac={crossX}
-          label={base.label} unit={def.unit} color={cfg.color} min={cfg.min} max={cfg.max}
-          gridTicks={base.gridTicks} extraValues={extraValues}
-          warningAt={cfg.warnAt} dangerAt={cfg.dangerAt}
-          getValue={f => resolveChannel(cfg.channel, f, math).value}
-          onConfig={() => openConfig({ kind: 'chart', id })}
-        />
-      ),
-    }
-  }) as (StackItem | null)[]).filter((x): x is StackItem => x !== null)
-
-  return (
-    <div ref={ref} className="flex flex-col h-full"
-      onMouseMove={e => { if (!syncCrosshair) return; const r = ref.current?.getBoundingClientRect(); if (r) setCrossX((e.clientX - r.left) / r.width) }}
-      onMouseLeave={() => setCrossX(null)}>
-      <div className="flex items-center justify-between px-3 border-b border-[#242424] bg-[#111111]" style={{ height: 20 }}>
-        <span style={{ fontFamily: MONO, fontSize: 8, color: '#2e2e2e', letterSpacing: '0.25em' }}>TIME SERIES — {(BUFFER / HZ).toFixed(0)}s WINDOW</span>
-        <div className="flex items-center gap-3">
-          {([['FL', '#00ffff'], ['FR', '#00cccc'], ['RL', '#33ffee'], ['RR', '#009999']] as [string, string][]).map(([lbl, col]) => (
-            <div key={lbl} className="flex items-center gap-1">
-              <div style={{ width: 10, height: 2, backgroundColor: col }} /><span style={{ fontFamily: MONO, fontSize: 7, color: '#333' }}>{lbl}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <DraggableStack items={items} onReorder={setChartOrder} />
-      </div>
-    </div>
-  )
-}
-
 // ── Arc Gauge ──────────────────────────────────────────────────────────────
 export function ArcGauge({ value, min, max, label, unit, color, warningAt, dangerAt, dp = 0 }: {
   value: number; min: number; max: number; label: string; unit: string; color: string
@@ -238,6 +105,70 @@ export function ArcGauge({ value, min, max, label, unit, color, warningAt, dange
         <text x={cx} y={cy + 31} textAnchor="middle" fontSize="6" fill="#3a3a3a" fontFamily="monospace">{unit}</text>
         <text x={cx} y={cy + 42} textAnchor="middle" fontSize="4.5" fill="#2e2e2e" fontFamily="monospace" letterSpacing="2">{label.toUpperCase()}</text>
       </svg>
+    </div>
+  )
+}
+
+// ── Bar Gauge (configurable alternative to the dial) ─────────────────────────
+/**
+ * Segmented bar using the gauge's own min/max and warn/danger levels. Segments
+ * at or above a threshold take its color; the lit segments show the value.
+ */
+export function BarGauge({ value, min, max, label, unit, color, warningAt, dangerAt, dp = 0, orientation = 'vertical' }: {
+  value: number; min: number; max: number; label: string; unit: string; color: string
+  warningAt?: number | null; dangerAt?: number | null; dp?: number; orientation?: 'vertical' | 'horizontal'
+}) {
+  const SEGS = orientation === 'vertical' ? 24 : 30
+  const span = max - min || 1
+  const known = Number.isFinite(value)
+  const filled = known ? clamp((value - min) / span, 0, 1) * SEGS : 0
+  let fg = color
+  if (known && dangerAt != null && value >= dangerAt) fg = '#ff3333'
+  else if (known && warningAt != null && value >= warningAt) fg = '#ff8800'
+  const segColor = (i: number) => {
+    const segValue = min + ((i + 1) / SEGS) * span
+    if (dangerAt != null && segValue > dangerAt) return '#ff3333'
+    if (warningAt != null && segValue > warningAt) return '#ff8800'
+    return color
+  }
+  const vertical = orientation === 'vertical'
+  const segments = Array.from({ length: SEGS }, (_, i) => {
+    const lit = i < Math.round(filled)
+    const c = segColor(i)
+    return (
+      <div key={i} style={{
+        flex: 1, borderRadius: 1, minWidth: vertical ? undefined : 2, minHeight: vertical ? 2 : undefined,
+        backgroundColor: lit ? c : c === color ? '#1c1c1c' : `${c}22`,
+        opacity: lit ? 1 : 0.6, boxShadow: lit ? `0 0 5px ${c}88` : 'none',
+      }} />
+    )
+  })
+  const readout = (
+    <div className="flex flex-col items-center" style={{ flexShrink: 0 }}>
+      <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: known ? fg : '#555', lineHeight: 1 }}>{known ? value.toFixed(dp) : '—'}</span>
+      <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a' }}>{known ? unit : 'N/A'}</span>
+    </div>
+  )
+  const title = <span style={{ fontFamily: MONO, fontSize: 7, color: '#3a3a3a', letterSpacing: '0.2em', textAlign: 'center' }}>{label.toUpperCase()}</span>
+  const scale = (v: number) => <span style={{ fontFamily: MONO, fontSize: 7, color: '#303030' }}>{Number.isInteger(v) ? v : v.toFixed(1)}</span>
+
+  if (vertical) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-1 py-2" style={{ minWidth: 0 }}>
+        {title}
+        <div className="flex items-stretch gap-1.5 flex-1" style={{ minHeight: 60, maxHeight: 190 }}>
+          <div className="flex flex-col justify-between items-end">{scale(max)}{scale(min)}</div>
+          <div className="flex flex-col-reverse" style={{ width: 22, gap: 2 }}>{segments}</div>
+        </div>
+        {readout}
+      </div>
+    )
+  }
+  return (
+    <div className="flex-1 flex flex-col items-stretch justify-center gap-1.5 px-2" style={{ minWidth: 0 }}>
+      <div className="flex items-end justify-between gap-2">{title}{readout}</div>
+      <div className="flex" style={{ height: 16, gap: 2 }}>{segments}</div>
+      <div className="flex justify-between">{scale(min)}{scale(max)}</div>
     </div>
   )
 }
@@ -389,30 +320,30 @@ export function SuspHistogram({ frames, getVal, label, color }: { frames: Frame[
 }
 
 // ── Status Bar ────────────────────────────────────────────────────────────────
-export interface ActiveAlert { id: string; severity: 'warn' | 'danger'; message: string }
 
 export function StatusBar({
   cur,
-  alerts,
   connectionStatus = 'simulated',
   packetRate = 10,
   source = 'simulation',
+  supabaseMode = 'broadcast',
   freshness = 'fresh',
-  onToggleSource,
+
   onOpenConfig,
 }: {
   cur: Frame | undefined
-  alerts: ActiveAlert[]
+
   connectionStatus?: 'simulated' | 'connecting' | 'connected' | 'subscribed' | 'reconnecting' | 'disconnected' | 'error' | 'misconfigured'
   packetRate?: number
   source?: 'simulation' | 'websocket' | 'supabase'
+  supabaseMode?: SupabaseMode
   freshness?: 'no-data' | 'fresh' | 'stale'
-  onToggleSource?: () => void
+
   onOpenConfig?: () => void
 }) {
   const [blink, setBlink] = useState(true)
   useEffect(() => { const id = setInterval(() => setBlink(p => !p), 420); return () => clearInterval(id) }, [])
-  const danger = alerts.find(a => a.severity === 'danger') ?? alerts[0]
+
 
   const isWs = source === 'websocket'
   const isSb = source === 'supabase'
@@ -437,6 +368,12 @@ export function StatusBar({
       : connectionStatus === 'disconnected'
       ? 'WS RECONNECTING...'
       : 'CONNECTING TO WS...')
+    : supabaseMode === 'raw'
+    ? connectionStatus === 'misconfigured' ? 'RAW CAN CONFIG'
+      : connectionStatus === 'error' ? 'RAW BATCH READ ERROR'
+      : connectionStatus !== 'connected' ? 'CONNECTING RAW BATCHES'
+      : freshness === 'fresh' ? `RAW CAN · ${packetRate} FRAMES/S`
+      : freshness === 'stale' ? 'RAW CAN · STALE' : 'RAW CAN · NO DATA'
     : connectionStatus === 'misconfigured'
     ? 'SUPABASE CONFIG'
     : connectionStatus === 'error'
@@ -476,10 +413,10 @@ export function StatusBar({
           </span>
         </button>
 
-        {onToggleSource && (
+        {onOpenConfig && (
           <button
-            onClick={onToggleSource}
-            title={source === 'simulation' ? 'Switch to live WebSocket' : source === 'websocket' ? 'Switch to Supabase Broadcast' : 'Switch to local simulation'}
+            onClick={onOpenConfig}
+            title="Set up simulation, WebSocket, or Supabase telemetry"
             style={{
               fontFamily: MONO,
               fontSize: 7,
@@ -492,7 +429,7 @@ export function StatusBar({
               letterSpacing: '0.1em',
             }}
           >
-            {source === 'simulation' ? '⇄ WS' : source === 'websocket' ? '⇄ SB' : '⇄ SIM'}
+            SETUP
           </button>
         )}
       </div>
@@ -517,16 +454,7 @@ export function StatusBar({
         </div>
       ))}
       <div style={{ flex: 1 }} />
-      {danger && (
-        <div className="flex items-center gap-2 px-3 h-full border-l border-[#222]"
-          style={{ backgroundColor: blink ? (danger.severity === 'danger' ? '#ff333314' : '#ff880014') : 'transparent', transition: 'background 0.2s' }}>
-          {alerts.length > 1 && <span style={{ fontFamily: MONO, fontSize: 8, color: '#666' }}>+{alerts.length - 1}</span>}
-          <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: danger.severity === 'danger' ? '#ff3333' : '#ff8800', boxShadow: blink ? `0 0 10px ${danger.severity === 'danger' ? '#ff3333' : '#ff8800'}` : 'none', transition: 'box-shadow 0.2s' }} />
-          <span style={{ fontFamily: MONO, fontSize: 9, color: danger.severity === 'danger' ? '#ff3333' : '#ff8800', fontWeight: 700, letterSpacing: '0.1em', opacity: blink ? 1 : 0.35, transition: 'opacity 0.2s' }}>
-            !!! {danger.message}
-          </span>
-        </div>
-      )}
+
       <div className="flex items-center px-3 h-full border-l border-[#1e1e1e]">
         <span style={{ fontFamily: MONO, fontSize: 7, color: '#333', letterSpacing: '0.2em' }}>TELEMETRY BRIDGE v2.5</span>
       </div>

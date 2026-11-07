@@ -1,6 +1,6 @@
 import { Frame, MONO, LAP_LEN } from '../telemetry/simulation'
-import { useConfig } from '../state/ConfigContext'
-import { WidgetControls, ArcGauge, VBar, FrictionCircle, GpsTrackMap, SuspHistogram, resolveChannel } from './widgets'
+import { useConfig, GAUGE_STYLES, type GaugeStyle } from '../state/ConfigContext'
+import { WidgetControls, ArcGauge, BarGauge, VBar, FrictionCircle, GpsTrackMap, SuspHistogram, resolveChannel } from './widgets'
 
 function PanelHeader({ title, right, onConfig }: { title: string; right?: React.ReactNode; onConfig?: () => void }) {
   return (
@@ -21,20 +21,36 @@ export const EMPTY_FRAME: Frame = {
   suspFL: 0, suspFR: 0, suspRL: 0, suspRR: 0,
 }
 
+const STYLE_ICON: Record<GaugeStyle, string> = { dial: '◔', vbar: '▮', hbar: '▬' }
+const STYLE_WEIGHT: Record<GaugeStyle, number> = { dial: 2, vbar: 1, hbar: 2 }
+
 export function GaugePanel({ frames }: { frames: Frame[] }) {
-  const { gauges, math, openConfig } = useConfig()
+  const { gauges, setGauges, math, openConfig } = useConfig()
   const cur = frames[frames.length - 1] ?? EMPTY_FRAME
+  const cycleStyle = (id: string) => setGauges(gauges.map(g => {
+    if (g.id !== id) return g
+    const i = GAUGE_STYLES.findIndex(s => s.id === g.style)
+    return { ...g, style: GAUGE_STYLES[(i + 1) % GAUGE_STYLES.length].id }
+  }))
   return (
     <div className="flex flex-col h-full bg-[#171717]">
       <PanelHeader title="INSTRUMENT GAUGES" onConfig={() => openConfig({ kind: 'gauges' })} />
       <div className="flex flex-1 items-stretch justify-around px-4 py-1 gap-2">
         {gauges.map((g, i) => {
           const { value, def } = resolveChannel(g.channel, cur, math)
+          const common = { value, min: g.min, max: g.max, label: def.label, unit: def.unit, color: def.color, warningAt: g.warnAt, dangerAt: g.dangerAt, dp: dpFor(def.unit) }
+          const next = GAUGE_STYLES[(GAUGE_STYLES.findIndex(s => s.id === g.style) + 1) % GAUGE_STYLES.length]
           return (
-            <div key={g.id} className="flex-1 flex items-stretch" style={{ minWidth: 0 }}>
+            <div key={g.id} className="group relative flex items-stretch" style={{ minWidth: 0, flex: STYLE_WEIGHT[g.style] }}>
               {i > 0 && <div className="w-px bg-[#1e1e1e] my-3" />}
-              <ArcGauge value={value} min={g.min} max={g.max} label={def.label} unit={def.unit} color={def.color}
-                warningAt={g.warnAt} dangerAt={g.dangerAt} dp={dpFor(def.unit)} />
+              {g.style === 'dial'
+                ? <ArcGauge {...common} />
+                : <BarGauge {...common} orientation={g.style === 'vbar' ? 'vertical' : 'horizontal'} />}
+              <button onClick={() => cycleStyle(g.id)} title={`Switch to ${next.title.toLowerCase()}`}
+                className="absolute opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ top: 4, right: 2, fontFamily: MONO, fontSize: 10, color: '#4488ff', backgroundColor: '#4488ff14', border: '1px solid #4488ff33', borderRadius: 3, padding: '0 4px', cursor: 'pointer' }}>
+                {STYLE_ICON[next.id]}
+              </button>
             </div>
           )
         })}

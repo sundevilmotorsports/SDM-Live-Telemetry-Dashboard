@@ -10,7 +10,16 @@ It supports three telemetry sources:
 
 - **Simulation** (default): generates frames internally; no external data is needed.
 - **WebSocket**: the browser connects to a server that pushes telemetry frames.
-- **Supabase Realtime Broadcast**: the browser subscribes to `telemetry:live:<session UUID>` and merges partial decoded channel updates. It does not decode HTP, sign ingest posts, or poll the database. Configure `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (publishable or legacy anon only), and `VITE_TELEMETRY_SESSION_ID`. See `src/telemetry/live/` and `env.example`. Unmapped dashboard fields render as unavailable, not as zeros.
+- **Supabase raw CAN batches** (default Supabase input mode): the user signs in with Supabase Auth (email/password), enters the device ID, and presses **Start session** (RPC `telemetry.start_session`, which ends any running session for that device). The car's batches are stored by the `telemetry-ingest` edge function in `telemetry.can_batches` under the device's running session. The browser polls `telemetry.can_batches` filtered by `session_id` (readable by authenticated users only), decodes the hex CAN payloads locally using a pinned copy of `logger/config.json`, resamples the result to 10 Hz by each frame's `ts_ms` so the 180-frame buffer is a true 18 s window, and maps verified signals to dashboard fields. **End session** calls `telemetry.end_session`; the session picker reopens past sessions. Configure `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (publishable or legacy anon only) and optionally `VITE_TELEMETRY_DEVICE_ID`. It loads the whole session oldest-first (pages of 100 batches) and then polls for new primary IDs once per second; playback runs about 2 s behind the newest sample for a steady 10 Hz. Historical data stays stale; missing measurements remain unavailable. See `src/telemetry/raw/README.md` for the contract and limitations, and `helios-telemetry-devkit/supabase/migrations/20261107000000_telemetry_can_batches.sql` for the schema.
+- **Supabase Realtime Broadcast** (legacy opt-in input mode): select it in source settings to subscribe to `telemetry:live:<session UUID>` and merge partial, already-decoded channel updates. Configure `VITE_TELEMETRY_SESSION_ID` (the same session ID field is shared with raw mode). This path still does not decode HTP or sign ingest posts. See `src/telemetry/live/` and `env.example`.
+
+- **Time series charts** (`src/components/TimeSeriesPanel.tsx`), modelled on MoTeC i2:
+  - **Grouping:** drag a channel from the **CHANNELS** list onto a chart to overlay it, or onto a chart's top/bottom edge (or the bottom drop zone) to start a new chart there; double-click a channel for a new chart. Drag a trace's name in a chart header to another chart to regroup it, or to a chart edge to split it out; a chart left empty is removed. Each trace keeps its own scale.
+  - **Traces:** click a name to highlight it (others dim; the scale labels follow it), click its dot to hide/show. The chart's ⚙ edits title, colors, scales, warn/danger levels and order; **+ CHART** adds an empty chart; drag a chart's title bar to reorder.
+  - **Time zoom (all charts together):** wheel or pinch zooms around the cursor, drag across a chart zooms to that span, Shift+wheel or Shift/middle-drag pans, double-click or **FIT**/`0` resets, `+`/`-` zoom. Zoomed at the live edge keeps following live data; panning back pauses it and **● LIVE** jumps back.
+  - **Scale zoom (per chart):** Option/Alt+wheel zooms the vertical scale around the cursor, Option/Alt+Shift+wheel or dragging the left scale strip pans it, double-clicking the strip or the **Y×** badge resets it. Scale zoom is a view setting; the configured min/max are unchanged.
+  - **Time range:** **WINDOW** (preset or custom seconds; zooming out can reveal earlier data), **SESSION** (all received history, up to 2 h in memory), or **LAP** (x-axis = lap time; current or any past lap, best lap dashed and previous lap dotted as ghosts). Simulation and lap-aware WebSocket producers supply laps; raw CAN has no lap signal, so laps come from **MARK LAP** (shortcut `L`) at the start/finish line, stored per session in this browser.
+- **Gauges** (`src/components/panels.tsx` `GaugePanel`): each gauge is a **dial**, a **vertical bar** or a **horizontal bar**, set in the gauge settings (STYLE) or cycled with the small icon that appears when hovering a gauge. Bars use the gauge's own min/max and warn/danger levels; segments above a threshold take its color.
 
 ```text
 Vehicle sensors / CAN decoder / recorded CSV / mock generator
@@ -183,7 +192,11 @@ For HTTPS deployments, use a browser-compatible secure WebSocket (`wss://`) endp
 
 | File | Responsibility |
 | --- | --- |
-| `src/telemetry/useTelemetry.ts` | WebSocket ingestion, defaults, reconnects, buffer, lap processing |
+| `src/telemetry/useTelemetry.ts` | Source selection, frame buffering, WebSocket ingestion, simulation/WebSocket lap processing |
+| `src/telemetry/raw/` | Read-only `telemetry.can_batches` polling by session, local CAN decoding, 10 Hz resampling, safe dashboard mapping and tests |
+| `src/telemetry/sessions/` | Supabase Auth helpers, `start_session` / `end_session` RPC wrappers, session list, auth hook |
+| `src/components/SessionControls.tsx` | Sign-in, device field, Start/End session, session picker |
+| `src/telemetry/live/` | Legacy decoded Broadcast subscription, validation and mapping |
 | `src/telemetry/simulation.ts` | `Frame` interface, channel units/scales, simulation and track constants |
 | `src/state/ConfigContext.tsx` | Default source/URL and persisted dashboard configuration |
 | `src/App.tsx` | Wiring telemetry into the dashboard |

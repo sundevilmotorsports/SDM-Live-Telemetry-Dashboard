@@ -31,7 +31,7 @@ export function DraggableStack({ items, onReorder }: { items: StackItem[]; onReo
 
   const onPointerDown = (e: React.PointerEvent) => {
     const t = e.target as HTMLElement
-    if (t.closest('button, input, select, a')) return // keep controls clickable
+    if (t.closest('button, input, select, a, [draggable="true"]')) return // keep controls and drag sources clickable
     if (!t.closest('.panel-drag')) return
     const wrap = t.closest('[data-widx]') as HTMLElement | null
     if (!wrap) return

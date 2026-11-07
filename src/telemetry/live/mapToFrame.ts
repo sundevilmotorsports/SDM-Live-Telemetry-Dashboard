@@ -119,7 +119,7 @@ export function channelLabel(id: string): string {
   return LIVE_CHANNEL_MAP[id]?.label ?? id
 }
 
-function emptyFrame(): Frame {
+export function emptyFrame(): Frame {
   return {
     t: NaN,
     speed: NaN,

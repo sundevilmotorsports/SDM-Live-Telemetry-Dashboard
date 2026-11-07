@@ -7,6 +7,12 @@ import { useSupabaseLive } from './live/useSupabaseLive'
 import type { DataFreshness, LiveDiagnostics } from './live/types'
 import { EMPTY_DIAGNOSTICS } from './live/types'
 import type { MappedFrame } from './live/mapToFrame'
+import { useSupabaseRaw } from './raw/useSupabaseRaw'
+import type { RawBatchDiagnostics } from './raw/RawBatchSession'
+import { FrameResampler } from './raw/resampleFrames'
+import { PlayoutBuffer } from './raw/playout'
+import { FrameHistory } from './history'
+import { useSupabaseAuth } from './sessions/useSupabaseAuth'
 
 const KPI = ['speed', 'rpm', 'throttle', 'brake']
 
@@ -40,10 +46,20 @@ export interface Telemetry {
   source: TelemetrySource
   freshness: DataFreshness
   diagnostics: LiveDiagnostics | null
+  rawDiagnostics: RawBatchDiagnostics | null
+  rawReadings: { id: string; hex: string; tUs: number }[]
   unavailableFields: string[]
   unmappedChannels: string[]
   /** Latest accepted sample per channel id, including channels with no dashboard field. */
   channelReadings: { id: string; value: number; tUs: number; receivedAtMs: number }[]
+  /** Whole-session 10 Hz history for the time series (same clock as Frame.t). */
+  history: Frame[]
+  /** True if the oldest part of a long session was dropped to stay within memory. */
+  historyTruncated: boolean
+  /** Identifies the current stream (source/session) for per-session UI state such as lap marks. */
+  streamKey: string
+  /** Best estimate of the session time (Frame.t clock) at this wall-clock instant, for marking laps. */
+  sessionTimeNow: () => number | null
 }
 
 function sectorOf(lapFrac: number): number {
@@ -110,17 +126,32 @@ function normalizePacket(raw: any, fallbackT: number): Frame {
 }
 
 export function useTelemetry(): Telemetry {
-  const { telemetrySource, wsUrl, supabaseUrl, supabaseAnonKey, telemetrySessionId, staleAfterMs } = useConfig()
-  // Session/url edits only reset the frame buffer while that source is active.
-  const livePartition = telemetrySource === 'supabase' ? `${supabaseUrl}\n${telemetrySessionId}` : ''
+  const { telemetrySource, wsUrl, supabaseUrl, supabaseAnonKey, telemetrySessionId, supabaseMode, staleAfterMs } = useConfig()
+  const auth = useSupabaseAuth(telemetrySource === 'supabase' && supabaseMode === 'raw' ? supabaseUrl : '', supabaseAnonKey)
+  // Device/session/transport edits must not mix unrelated streams in one buffer.
+  const livePartition = telemetrySource === 'supabase'
+    ? `${supabaseUrl}\n${supabaseMode}\n${telemetrySessionId}\n${auth.status === 'signed-in'}` : ''
+  const activeSupabaseKey = telemetrySource === 'supabase' ? supabaseAnonKey : ''
   const bufRef = useRef<Frame[]>([])
   const tRef = useRef(0)
   const onFrameRef = useRef<(frame: Frame) => void>(() => {})
+  const resamplerRef = useRef(new FrameResampler())
+  const playoutRef = useRef(new PlayoutBuffer())
+  const historyRef = useRef(new FrameHistory())
   const live = useSupabaseLive({
-    enabled: telemetrySource === 'supabase',
+    enabled: telemetrySource === 'supabase' && supabaseMode === 'broadcast',
     url: supabaseUrl,
     anonKey: supabaseAnonKey,
     sessionId: telemetrySessionId,
+    staleAfterMs,
+    onAccepted: mapped => onFrameRef.current(mapped.frame),
+  })
+  const raw = useSupabaseRaw({
+    enabled: telemetrySource === 'supabase' && supabaseMode === 'raw',
+    url: supabaseUrl,
+    anonKey: supabaseAnonKey,
+    sessionId: telemetrySessionId,
+    signedIn: auth.status === 'signed-in',
     staleAfterMs,
     onAccepted: mapped => onFrameRef.current(mapped.frame),
   })
@@ -178,6 +209,7 @@ export function useTelemetry(): Telemetry {
     const ingestFrame = (f: Frame) => {
       if (bufRef.current.length >= BUFFER) bufRef.current.shift()
       bufRef.current.push(f)
+      historyRef.current.push(f)
 
       const newSector = sectorOf(f.lapTime / LAP_LEN)
       if (f.lapNum !== lapNumRef.current) {
@@ -197,8 +229,16 @@ export function useTelemetry(): Telemetry {
 
     onFrameRef.current = (f: Frame) => {
       if (telemetrySource !== 'supabase') return
-      if (bufRef.current.length >= BUFFER) bufRef.current.shift()
-      bufRef.current.push(f)
+      // Raw CAN arrives at CAN rate in per-batch bursts: resample to HZ by ts_ms
+      // (so BUFFER frames span BUFFER / HZ seconds), then queue for steady
+      // playout by the animation loop below. Broadcast frames are shown as they come.
+      const accepted = supabaseMode === 'raw' ? [] : [f]
+      if (supabaseMode === 'raw') playoutRef.current.push(resamplerRef.current.push(f))
+      for (const next of accepted) {
+        if (bufRef.current.length >= BUFFER) bufRef.current.shift()
+        bufRef.current.push(next)
+        historyRef.current.push(next)
+      }
       packetCountRef.current++
       const now = Date.now()
       if (now - lastRateTimeRef.current >= 1000) {
@@ -207,14 +247,16 @@ export function useTelemetry(): Telemetry {
         packetCountRef.current = 0
         lastRateTimeRef.current = now
       }
-      startTransition(() => setTick(n => n + 1))
+      if (accepted.length > 0) startTransition(() => setTick(n => n + 1))
     }
 
     if (telemetrySource === 'simulation') {
       // Always reseed. A previous live buffer can contain NaN for unmapped fields,
       // which must not be mixed into the synthetic stream.
       bufRef.current = []
+      historyRef.current.reset()
       for (let i = 0; i < BUFFER; i++) bufRef.current.push(makeFrame(i / HZ))
+      for (const f of bufRef.current) historyRef.current.push(f)
       tRef.current = BUFFER / HZ
       const cur0 = bufRef.current[bufRef.current.length - 1]
       lapNumRef.current = cur0.lapNum
@@ -241,6 +283,9 @@ export function useTelemetry(): Telemetry {
     // Live sources start empty. Broadcast is not replayed, and a session change
     // must not keep samples from the previous run.
     bufRef.current = []
+    historyRef.current.reset()
+    resamplerRef.current.reset()
+    playoutRef.current.reset()
     tRef.current = 0
     setLaps([])
     setPacketRate(0)
@@ -327,12 +372,33 @@ export function useTelemetry(): Telemetry {
         ws.close()
       }
     }
-  }, [telemetrySource, wsUrl, livePartition])
+  }, [telemetrySource, wsUrl, livePartition, activeSupabaseKey])
+
+  // Steady playout for raw CAN: release queued 10 Hz frames on the wall clock so
+  // charts and gauges advance at the recorded rate instead of once per batch.
+  useEffect(() => {
+    if (telemetrySource !== 'supabase' || supabaseMode !== 'raw') return
+    let frameId = 0
+    const step = () => {
+      const released = playoutRef.current.release(performance.now())
+      if (released.length > 0) {
+        for (const next of released) {
+          if (bufRef.current.length >= BUFFER) bufRef.current.shift()
+          bufRef.current.push(next)
+          historyRef.current.push(next)
+        }
+        startTransition(() => setTick(n => n + 1))
+      }
+      frameId = requestAnimationFrame(step)
+    }
+    frameId = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(frameId)
+  }, [telemetrySource, supabaseMode])
 
   useEffect(() => {
     if (telemetrySource !== 'supabase') return
-    setConnectionStatus(liveStatus(live.status))
-  }, [telemetrySource, live.status])
+    setConnectionStatus(supabaseMode === 'raw' ? raw.status === 'idle' ? 'connecting' : raw.status : liveStatus(live.status))
+  }, [telemetrySource, supabaseMode, live.status, raw.status])
 
   const bestLap = laps.reduce<Lap | null>((b, l) => (l.valid && (!b || l.total < b.total) ? l : b), null)
   const bestSectors: [number, number, number] = [0, 1, 2].map(i => {
@@ -342,10 +408,31 @@ export function useTelemetry(): Telemetry {
   const theoretical = bestSectors.every(isFinite) ? bestSectors[0] + bestSectors[1] + bestSectors[2] : NaN
 
   const supabase = telemetrySource === 'supabase'
-  const mapped: MappedFrame | null = supabase ? live.frame : null
+  const selected = supabaseMode === 'raw' ? raw : live
+  const mapped: MappedFrame | null = supabase ? selected.frame : null
+
+  const rawActive = supabase && supabaseMode === 'raw'
+  const rawSessionStartUs = rawActive ? raw.sessionStartUs : null
+  const sessionTimeNow = (): number | null => {
+    const frames = historyRef.current.frames
+    const newestShown = frames.length ? frames[frames.length - 1].t : null
+    if (!rawActive) return newestShown
+    // Raw CAN: Frame.t is device time (ts_ms) since the session's first sample, so the
+    // wall clock maps onto it directly (the car syncs its clock over SNTP). Fall back
+    // to the newest received sample if the clocks disagree wildly.
+    const newestReceived = playoutRef.current.newestTime ?? newestShown
+    if (rawSessionStartUs === null) return newestReceived
+    const estimate = (Date.now() * 1000 - rawSessionStartUs) / 1_000_000
+    if (newestReceived !== null && (estimate < newestReceived - 5 || estimate > newestReceived + 30)) return newestReceived
+    return estimate
+  }
 
   return {
     frames: bufRef.current,
+    history: historyRef.current.frames,
+    historyTruncated: historyRef.current.truncated,
+    streamKey: telemetrySource === 'supabase' ? `supabase:${supabaseMode}:${telemetrySessionId}` : telemetrySource === 'websocket' ? `ws:${wsUrl}` : 'simulation',
+    sessionTimeNow,
     laps,
     bestLap,
     bestSectors,
@@ -353,12 +440,14 @@ export function useTelemetry(): Telemetry {
     connectionStatus,
     packetRate,
     source: telemetrySource,
-    freshness: supabase ? live.freshness : 'fresh',
-    diagnostics: supabase ? live.diagnostics : null,
+    freshness: supabase ? selected.freshness : 'fresh',
+    diagnostics: supabase ? selected.diagnostics : null,
+    rawDiagnostics: supabase && supabaseMode === 'raw' ? raw.diagnostics : null,
+    rawReadings: supabase && supabaseMode === 'raw' ? raw.rawReadings : [],
     unavailableFields: mapped?.unavailableFields ?? [],
     unmappedChannels: mapped?.unmappedChannels ?? [],
     channelReadings: supabase
-      ? Object.entries(live.channels).map(([id, sample]) => ({ id, value: sample.value, tUs: sample.tUs, receivedAtMs: sample.receivedAtMs }))
+      ? Object.entries(selected.channels).map(([id, sample]) => ({ id, value: sample.value, tUs: sample.tUs, receivedAtMs: sample.receivedAtMs }))
       : [],
   }
 }

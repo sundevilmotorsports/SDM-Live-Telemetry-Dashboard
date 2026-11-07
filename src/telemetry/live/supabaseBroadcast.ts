@@ -26,7 +26,8 @@ export function getSupabaseClient(url: string, key: string): SupabaseClient {
     void cached.client.realtime.disconnect()
   }
   const client = createClient(origin, key.trim(), {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    // The signed-in user's session authorizes raw CAN reads (RLS) and the session RPCs.
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
     realtime: { params: { eventsPerSecond: 10 } },
   })
   cached = { url: origin, key: key.trim(), client }
