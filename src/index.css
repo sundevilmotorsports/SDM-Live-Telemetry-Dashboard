@@ -26,3 +26,13 @@ body {
   from { transform: scale(0.94); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
+
+/* Critical warning chip in the docked warning strip. */
+@keyframes alertPulse {
+  0%, 100% { box-shadow: 0 0 0 0 #ff4d4d00; }
+  50% { box-shadow: 0 0 8px 1px #ff4d4daa; }
+}
+.alert-pulse { animation: alertPulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .alert-pulse { animation: none; }
+}

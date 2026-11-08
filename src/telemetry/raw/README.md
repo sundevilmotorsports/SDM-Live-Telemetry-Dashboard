@@ -105,3 +105,35 @@ Pressure engineering units, wheel circumference/speed conversion, IMU units/axis
 ## Validation
 
 Run `npm test`, `npx tsc --noEmit`, and `npm run build`. Tests cover real stored frame decoding, logger arithmetic, fixed/muxed signals, malformed/truncated inputs, large integers, raw-byte preservation, session boundaries, 10 Hz resampling, auth/session RPC wrappers, cancellation/timeouts, pagination/retries, deduplication, historical freshness, safe field mapping, and read-only query construction. Hosted end-to-end validation uses `helios-telemetry-devkit/scripts/seed_can_batches.sql` as a stand-in for the car; calibrated live vehicle data is still outstanding.
+
+## Channel activity, sample rates, and display units
+
+- **Receiving data** (`src/telemetry/channelActivity.ts`): a channel is "receiving" if a new sample was accepted within `max(staleAfterMs, 3 sample periods)` of wall-clock time. Held values do not count, so a silent sensor or a stored historical session goes gray. The workspace channel list is white when receiving, gray otherwise; a filled swatch means it is on a chart.
+- **Sample rate**: exponential average of the interval between consecutive samples of each channel, from device `ts_ms`, measured on every CAN frame before the 10 Hz resampler (which would flatten every rate to 10 Hz). Shown as `—` until two samples have been seen.
+- **Channels tab** (`src/views/ChannelTable.tsx`): every channel currently receiving data, including logger channels the dashboard does not map, with value, unit dropdown, and rate.
+- **Units** (`src/telemetry/units.ts`): the dropdown choice is stored per channel (`unitPrefs`) and applies to gauges, chart axes/readouts/limits, the channel list, and the table. Data, alert expressions, and math channels stay in the base unit. `loggerConfig.json` has no units, so raw channels get a unit only where the name states one (`%_`, `t_`, `temp_c_`, `_lpm_`, `total_volume_l_`, `r_engine`); others show no dropdown rather than a guess.
+
+## Auto-zero at rest (damper baseline)
+
+`src/telemetry/zeroing.ts`, `src/state/ZeroingContext.tsx`, controls in the Channels tab.
+
+- Channels marked AUTO-ZERO are read as-is until the car is first at rest. When the rest condition (an expression over dashboard channels, default `rpm < 500`, i.e. engine off; use `rpm < 500 || gear == 0` if the engine idles in the pit) has held for the hold time (default 3 s), each such channel's mean reading since the stop began becomes its baseline, and later values are shown relative to it until the next stop.
+- Baselines are a timeline: each applies from the start of its stop, so earlier history keeps the baseline that was in effect then. ZERO NOW sets one from the current time; CLEAR returns the channel to raw values. Baselines reset when the stream/session changes and are not persisted.
+- Display only: stored data, alerts, and math channels use raw values. A zeroed value is a difference, so unit conversion drops the offset (2 °C → 3.6 °F).
+- Defaults: damper/suspension position keys (`suspension.travel_*` from broadcast, `l_*_damper` from the logger). The rest condition uses rpm because raw mode maps engine rpm (`r_engine`) but no vehicle speed. The damper pots are logger ADC inputs not present in CAN batches, so on raw CAN today there is no damper channel to zero yet.
+
+## Every logger channel
+
+Every channel in `loggerConfig.json` is a dashboard channel (`raw:<name>`, or its dashboard field when mapped) and appears grouped in the channel list, charts, gauges, math, and the Channels tab. ADC inputs and the 8-byte tyre arrays cannot show live data yet; see `docs/logger-channels.md` for why and the fix for each. Dashboard-side frames (e.g. a future logger ADC broadcast) go in `canExtensions.json`, merged with the vendored config.
+
+## Profiles (whole-screen layouts)
+
+`src/state/profiles.ts` (pure logic), `profilePresets.ts` (presets), `src/components/ProfileTabs.tsx` (tab bar above the workspace). Modeled on MoTeC i2 worksheets: a profile is the whole workspace screen (charts with their traces/ranges/limits and order, gauges, which widgets are shown and their order). Time range, math channels, alerts, units, auto-zero, and source settings are shared by every profile.
+
+- Tabs switch profiles; edits save into the active profile automatically. `+` adds a blank or preset profile or imports an exported file; `⋯` renames, duplicates, resets to the preset it came from, exports to `.sdm-profile.json`, or deletes (never the last one). Double-click a tab to rename.
+- Existing saved settings become a single profile named "Main".
+- Presets (Engine Vitals, Speeds, Driver Inputs, Suspension & G, Tyres & Brakes, Fluids & Fuel, Loads & Pots, Blank) are groupings by common motorsport analysis practice, not a copy of a MoTeC list. Channels with no live data show gray/N/A until data arrives. Ranges for `raw:p_oil`, `raw:p_Fuel`, `raw:p_MAP` and wheel rpm are estimates (units not defined in config.json): adjust in the chart config.
+
+## Resizable panels
+
+Every divider in the workspace can be dragged (`src/components/ResizeHandle.tsx`, math in `src/state/panelSizes.ts`): channel list width, charts / right column, each chart's height, each right-column widget's height, gauge widths, steering / fuel, pedal panel width, G-force / GPS, session timing width, and the warnings dock height. Arrow keys on a focused divider nudge it (Shift = bigger steps); double-click resets that one divider; profile menu → "Reset panel sizes" resets all. Neighbouring panels that share space are resized as a pair, so everything else keeps its size. Sizes are stored in the active profile (`panelSizes`), so each profile keeps its own layout. Not resizable: Driver Dash, Lap Analysis, the Channels tab, and the 2×2 suspension histograms.

@@ -32,7 +32,7 @@ function WarnLight({ label, active, color }: { label: string; active: boolean; c
 function Setting({ label, value, color = '#e0e0e0' }: { label: string; value: string; color?: string }) {
   return (
     <div className="flex flex-col items-center justify-center" style={{ flex: 1, borderRight: '1px solid #1c1c1c' }}>
-      <span style={{ fontFamily: MONO, fontSize: 9, color: '#404040', letterSpacing: '0.2em' }}>{label}</span>
+      <span style={{ fontFamily: MONO, fontSize: 9, color: '#8f8f8f', letterSpacing: '0.2em' }}>{label}</span>
       <span style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color, lineHeight: 1.1 }}>{value}</span>
     </div>
   )
@@ -63,34 +63,34 @@ export function DriverDash({ frames, bestLap }: { frames: Frame[]; bestLap: Lap 
         {/* left column: lap + delta */}
         <div className="flex flex-col items-center justify-center gap-6" style={{ width: '26%', borderRight: '1px solid #161616' }}>
           <div className="flex flex-col items-center">
-            <span style={{ fontFamily: MONO, fontSize: 11, color: '#404040', letterSpacing: '0.3em' }}>LAP</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: '#8f8f8f', letterSpacing: '0.3em' }}>LAP</span>
             <span style={{ fontFamily: MONO, fontSize: 64, fontWeight: 700, color: '#e0e0e0', lineHeight: 1 }}>{Number.isFinite(cur.lapNum) ? cur.lapNum : '—'}</span>
           </div>
           <div className="flex flex-col items-center">
-            <span style={{ fontFamily: MONO, fontSize: 11, color: '#404040', letterSpacing: '0.3em' }}>LAP TIME</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: '#8f8f8f', letterSpacing: '0.3em' }}>LAP TIME</span>
             <span style={{ fontFamily: MONO, fontSize: 30, fontWeight: 700, color: '#00ffff' }}>{fmtTime(cur.lapTime)}</span>
           </div>
           <div className="flex flex-col items-center">
-            <span style={{ fontFamily: MONO, fontSize: 11, color: '#404040', letterSpacing: '0.3em' }}>DELTA</span>
-            <span style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: !Number.isFinite(delta) ? '#555' : delta <= 0 ? '#00ff41' : '#ff4444' }}>{Number.isFinite(delta) ? `${delta <= 0 ? '' : '+'}${delta.toFixed(2)}` : '—'}</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: '#8f8f8f', letterSpacing: '0.3em' }}>DELTA</span>
+            <span style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: !Number.isFinite(delta) ? '#989898' : delta <= 0 ? '#00ff41' : '#ff4444' }}>{Number.isFinite(delta) ? `${delta <= 0 ? '' : '+'}${delta.toFixed(2)}` : '—'}</span>
           </div>
         </div>
 
         {/* center: giant gear */}
         <div className="flex flex-col items-center justify-center" style={{ flex: 1 }}>
           <span style={{ fontFamily: MONO, fontSize: 220, fontWeight: 700, color: gearColor, lineHeight: 0.9, textShadow: `0 0 60px ${gearColor}55` }}>{Number.isFinite(cur.gear) ? Math.round(cur.gear) : '—'}</span>
-          <span style={{ fontFamily: MONO, fontSize: 22, color: '#404040', letterSpacing: '0.4em', marginTop: 8 }}>{fmtNum(cur.rpm, 0)} RPM</span>
+          <span style={{ fontFamily: MONO, fontSize: 22, color: '#8f8f8f', letterSpacing: '0.4em', marginTop: 8 }}>{fmtNum(cur.rpm, 0)} RPM</span>
         </div>
 
         {/* right: big speed */}
         <div className="flex flex-col items-center justify-center gap-4" style={{ width: '26%', borderLeft: '1px solid #161616' }}>
           <div className="flex flex-col items-center">
             <span style={{ fontFamily: MONO, fontSize: 96, fontWeight: 700, color: '#fff', lineHeight: 1 }}>{fmtNum(cur.speed, 0)}</span>
-            <span style={{ fontFamily: MONO, fontSize: 14, color: '#404040', letterSpacing: '0.3em' }}>KM/H</span>
+            <span style={{ fontFamily: MONO, fontSize: 14, color: '#8f8f8f', letterSpacing: '0.3em' }}>KM/H</span>
           </div>
           <div className="flex flex-col items-center">
-            <span style={{ fontFamily: MONO, fontSize: 11, color: '#404040', letterSpacing: '0.3em' }}>FUEL</span>
-            <span style={{ fontFamily: MONO, fontSize: 30, fontWeight: 700, color: !Number.isFinite(cur.fuel) ? '#555' : cur.fuel < 15 ? '#ff4444' : '#33ff99' }}>{Number.isFinite(cur.fuel) ? `${cur.fuel.toFixed(0)}%` : '—'}</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: '#8f8f8f', letterSpacing: '0.3em' }}>FUEL</span>
+            <span style={{ fontFamily: MONO, fontSize: 30, fontWeight: 700, color: !Number.isFinite(cur.fuel) ? '#989898' : cur.fuel < 15 ? '#ff4444' : '#33ff99' }}>{Number.isFinite(cur.fuel) ? `${cur.fuel.toFixed(0)}%` : '—'}</span>
           </div>
         </div>
       </div>
@@ -113,8 +113,8 @@ export function DriverDash({ frames, bestLap }: { frames: Frame[]; bestLap: Lap 
         <Setting label="BRAKE BIAS" value={bb == null ? '—' : `${bb}%`} color="#ff6644" />
         <Setting label="DIFF" value={throttleKnown ? String(6 - Math.round((cur.throttle / 100) * 3)) : '—'} color="#00ffff" />
         <div className="flex flex-col items-center justify-center" style={{ flex: 1 }}>
-          <span style={{ fontFamily: MONO, fontSize: 9, color: '#404040', letterSpacing: '0.2em' }}>OIL TEMP</span>
-          <span style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: !Number.isFinite(cur.oilTemp) ? '#555' : cur.oilTemp > 130 ? '#ff4444' : '#e0e0e0' }}>{Number.isFinite(cur.oilTemp) ? `${cur.oilTemp.toFixed(0)}°` : '—'}</span>
+          <span style={{ fontFamily: MONO, fontSize: 9, color: '#8f8f8f', letterSpacing: '0.2em' }}>OIL TEMP</span>
+          <span style={{ fontFamily: MONO, fontSize: 26, fontWeight: 700, color: !Number.isFinite(cur.oilTemp) ? '#989898' : cur.oilTemp > 130 ? '#ff4444' : '#e0e0e0' }}>{Number.isFinite(cur.oilTemp) ? `${cur.oilTemp.toFixed(0)}°` : '—'}</span>
         </div>
       </div>
     </div>

@@ -13,6 +13,7 @@ import { FrameResampler } from './raw/resampleFrames'
 import { PlayoutBuffer } from './raw/playout'
 import { FrameHistory } from './history'
 import { useSupabaseAuth } from './sessions/useSupabaseAuth'
+import { ChannelActivityTracker, type ChannelStat } from './channelActivity'
 
 const KPI = ['speed', 'rpm', 'throttle', 'brake']
 
@@ -52,6 +53,8 @@ export interface Telemetry {
   unmappedChannels: string[]
   /** Latest accepted sample per channel id, including channels with no dashboard field. */
   channelReadings: { id: string; value: number; tUs: number; receivedAtMs: number }[]
+  /** Per source channel: latest value, measured sample rate, and whether it is currently receiving data. */
+  channelStats: ChannelStat[]
   /** Whole-session 10 Hz history for the time series (same clock as Frame.t). */
   history: Frame[]
   /** True if the oldest part of a long session was dropped to stay within memory. */
@@ -138,6 +141,7 @@ export function useTelemetry(): Telemetry {
   const resamplerRef = useRef(new FrameResampler())
   const playoutRef = useRef(new PlayoutBuffer())
   const historyRef = useRef(new FrameHistory())
+  const activityRef = useRef(new ChannelActivityTracker())
   const live = useSupabaseLive({
     enabled: telemetrySource === 'supabase' && supabaseMode === 'broadcast',
     url: supabaseUrl,
@@ -154,6 +158,8 @@ export function useTelemetry(): Telemetry {
     signedIn: auth.status === 'signed-in',
     staleAfterMs,
     onAccepted: mapped => onFrameRef.current(mapped.frame),
+    // Rates come from every CAN frame's device time, before the 10 Hz resampling.
+    onChannels: channels => activityRef.current.observe(channels),
   })
   const [, setTick] = useState(0)
   const [laps, setLaps] = useState<Lap[]>([])
@@ -286,6 +292,7 @@ export function useTelemetry(): Telemetry {
     historyRef.current.reset()
     resamplerRef.current.reset()
     playoutRef.current.reset()
+    activityRef.current.reset()
     tRef.current = 0
     setLaps([])
     setPacketRate(0)
@@ -400,6 +407,12 @@ export function useTelemetry(): Telemetry {
     setConnectionStatus(supabaseMode === 'raw' ? raw.status === 'idle' ? 'connecting' : raw.status : liveStatus(live.status))
   }, [telemetrySource, supabaseMode, live.status, raw.status])
 
+  // Broadcast delivers one group update per message, so observing the snapshot is enough.
+  // Raw feeds the tracker per CAN frame instead (onChannels above).
+  useEffect(() => {
+    if (telemetrySource === 'supabase' && supabaseMode === 'broadcast') activityRef.current.observe(live.channels)
+  })
+
   const bestLap = laps.reduce<Lap | null>((b, l) => (l.valid && (!b || l.total < b.total) ? l : b), null)
   const bestSectors: [number, number, number] = [0, 1, 2].map(i => {
     const vals = laps.filter(l => l.valid).map(l => [l.s1, l.s2, l.s3][i])
@@ -449,6 +462,7 @@ export function useTelemetry(): Telemetry {
     channelReadings: supabase
       ? Object.entries(selected.channels).map(([id, sample]) => ({ id, value: sample.value, tUs: sample.tUs, receivedAtMs: sample.receivedAtMs }))
       : [],
+    channelStats: supabase ? activityRef.current.stats(selected.channels, Date.now(), staleAfterMs) : [],
   }
 }
 

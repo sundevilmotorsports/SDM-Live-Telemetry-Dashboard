@@ -1,6 +1,15 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { CHART_BASE, CHART_BASE_MAP, CHANNEL_MAP } from '../telemetry/simulation'
+import { sanitizeUnitPrefs, type UnitPrefs } from '../telemetry/units'
+import { LOGGER_CHANNEL_BY_NAME } from '../telemetry/raw/loggerChannels'
+import { DEFAULT_AUTO_ZERO, DEFAULT_REST_CONDITION, DEFAULT_REST_HOLD_S, OLD_DEFAULT_REST_CONDITION } from '../telemetry/zeroing'
 import { DEFAULT_TIME_RANGE, type TimeRangeConfig } from '../telemetry/chartView'
+import {
+  addProfile, deleteProfile, duplicateProfile, exportProfile, parseProfileImport, renameProfile,
+  replaceActive, snapshotOf, switchProfile, syncActive, type Profile, type ProfileData,
+} from './profiles'
+import { PRESET_BY_ID, buildPresetData } from './profilePresets'
+import { applySizePatch, sanitizePanelSizes, type PanelSizes } from './panelSizes'
 
 // ── Config types ─────────────────────────────────────────────────────────────
 /** One channel drawn in a chart, on its own scale. */
@@ -109,6 +118,19 @@ export interface ConfigState {
   telemetryDeviceId: string
   supabaseMode: SupabaseMode
   staleAfterMs: number
+  /** Display unit per channel key (dashboard channel id, math:<id>, or source id). Absent = base unit. */
+  unitPrefs: UnitPrefs
+  /** Channel keys re-zeroed when the car is at rest (see telemetry/zeroing.ts). */
+  autoZero: string[]
+  /** Expression over dashboard channels that means "car at rest", e.g. rpm < 500. */
+  restCondition: string
+  /** Seconds the rest condition must hold before a baseline is captured. */
+  restHoldS: number
+  /** Whole-screen layouts (see profiles.ts). The fields above/below this are the active profile's working copy. */
+  profiles: Profile[]
+  activeProfileId: string
+  /** Dragged panel sizes of the active profile (see panelSizes.ts). */
+  panelSizes: PanelSizes
 }
 
 const TRACE_PALETTE = ['#00ff41', '#ff3333', '#ffff00', '#00ffff', '#4488ff', '#c88bff', '#ff8800', '#33ff99', '#ff6644', '#00ffaa']
@@ -242,6 +264,48 @@ const DEFAULT: ConfigState = {
   telemetryDeviceId: envString('VITE_TELEMETRY_DEVICE_ID'),
   supabaseMode: 'raw',
   staleAfterMs: envStaleMs(),
+  unitPrefs: {},
+  autoZero: DEFAULT_AUTO_ZERO,
+  restCondition: DEFAULT_REST_CONDITION,
+  restHoldS: DEFAULT_REST_HOLD_S,
+  profiles: [],
+  activeProfileId: '',
+  panelSizes: {},
+}
+
+const WIDGET_IDS = ['gauges', 'steering', 'suspension', 'bottom']
+
+/** Repairs a profile's layout the same way saved config is repaired (older/hand-edited/imported data). */
+export function normalizeProfileData(raw: unknown): ProfileData {
+  const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
+  const { chartOrder, chartCfg } = normalizeCharts(r.chartOrder ?? [], r.chartCfg ?? {})
+  const order = Array.isArray(r.widgetOrder) ? r.widgetOrder.filter((id): id is string => typeof id === 'string' && WIDGET_IDS.includes(id)) : []
+  const widgetOrder = [...new Set([...order, ...WIDGET_IDS])]
+  const savedLayout = r.layout && typeof r.layout === 'object' ? r.layout as Record<string, unknown> : {}
+  const layout = { ...DEFAULT.layout }
+  for (const key of Object.keys(layout) as (keyof LayoutFlags)[]) if (typeof savedLayout[key] === 'boolean') layout[key] = savedLayout[key] as boolean
+  return { gauges: normalizeGauges(r.gauges), layout, widgetOrder, chartOrder, chartCfg, panelSizes: sanitizePanelSizes(r.panelSizes) }
+}
+
+/** Saved profiles, repaired; the active profile always gets a valid entry. */
+function normalizeProfiles(saved: unknown, activeId: unknown, working: ProfileData): { profiles: Profile[]; activeProfileId: string } {
+  const out: Profile[] = []
+  if (Array.isArray(saved)) {
+    for (const item of saved) {
+      if (!item || typeof item !== 'object') continue
+      const p = item as Record<string, unknown>
+      if (typeof p.id !== 'string' || !p.id || out.some(o => o.id === p.id)) continue
+      out.push({
+        id: p.id,
+        name: typeof p.name === 'string' && p.name.trim() ? p.name.trim().slice(0, 40) : 'Profile',
+        ...(typeof p.presetId === 'string' && PRESET_BY_ID[p.presetId] ? { presetId: p.presetId } : {}),
+        data: normalizeProfileData(p.data),
+      })
+    }
+  }
+  if (out.length === 0) out.push({ id: 'main', name: 'Main', data: working })
+  const activeProfileId = typeof activeId === 'string' && out.some(p => p.id === activeId) ? activeId : out[0].id
+  return { profiles: out, activeProfileId }
 }
 
 interface Ctx extends ConfigState {
@@ -264,6 +328,8 @@ interface Ctx extends ConfigState {
   dropChannel: (channel: string, target: DropTarget) => void
   /** Drag an existing trace to another chart or out into its own chart. Empty charts are removed. */
   dropTrace: (fromChartId: string, index: number, target: DropTarget) => void
+  /** Drag a trace back onto the channel list: remove it (an emptied chart is removed too). */
+  discardTrace: (chartId: string, index: number) => void
   setTelemetrySource: (source: TelemetrySource) => void
   setWsUrl: (url: string) => void
   setSupabaseUrl: (url: string) => void
@@ -272,6 +338,26 @@ interface Ctx extends ConfigState {
   setTelemetryDeviceId: (id: string) => void
   setSupabaseMode: (mode: SupabaseMode) => void
   setStaleAfterMs: (ms: number) => void
+  /** Pass null (or the base unit) to go back to the channel's own unit. */
+  setUnitPref: (key: string, unit: string | null) => void
+  setAutoZero: (key: string, on: boolean) => void
+  setRestCondition: (expr: string) => void
+  setRestHoldS: (s: number) => void
+  /** Set (number) or clear (null) dragged panel sizes in the active profile. */
+  setPanelSizes: (patch: Record<string, number | null>) => void
+  resetPanelSizes: () => void
+  // profiles (whole-screen layouts)
+  switchProfile: (id: string) => void
+  /** Add a profile from a preset id, or a blank one when omitted. */
+  addProfile: (presetId?: string) => void
+  duplicateProfile: () => void
+  renameProfile: (id: string, name: string) => void
+  deleteProfile: (id: string) => void
+  /** Reload the active profile's layout from the preset it started from. */
+  resetProfileToPreset: () => void
+  exportProfile: (id: string) => string | null
+  /** Returns an error message, or null on success. */
+  importProfile: (text: string) => string | null
   reset: () => void
   // contextual config modal control
   configTarget: ConfigTarget | null
@@ -324,6 +410,20 @@ export function applyDrop(
   return { ...s, chartCfg, chartOrder: chartOrder.filter(id => chartCfg[id]) }
 }
 
+/**
+ * Remove one trace (drag it back to the channel list). A chart left with no traces
+ * disappears, as when its last trace is dragged to another chart.
+ */
+export function discardTrace(s: ConfigState, chartId: string, index: number): ConfigState {
+  const chart = s.chartCfg[chartId]
+  if (!chart || !Number.isInteger(index) || index < 0 || index >= chart.traces.length) return s
+  const traces = chart.traces.filter((_, i) => i !== index)
+  if (traces.length > 0) return { ...s, chartCfg: { ...s.chartCfg, [chartId]: { ...chart, traces } } }
+  const chartCfg = { ...s.chartCfg }
+  delete chartCfg[chartId]
+  return { ...s, chartCfg, chartOrder: s.chartOrder.filter(id => id !== chartId) }
+}
+
 function withTraces(s: ConfigState, chartId: string, f: (traces: TraceConfig[]) => TraceConfig[]): ConfigState {
   const chart = s.chartCfg[chartId]
   return chart ? { ...s, chartCfg: { ...s.chartCfg, [chartId]: { ...chart, traces: f(chart.traces) } } } : s
@@ -358,20 +458,29 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
         merged.timeRange = normalizeTimeRange(saved.timeRange)
         merged.gauges = normalizeGauges(saved.gauges)
         merged.layout = { ...DEFAULT.layout, ...saved.layout }
+        // Logger channels used to be keyed by bare name (t_MAT); they are now channel ids (raw:t_MAT).
+        const loggerKey = (k: string) => LOGGER_CHANNEL_BY_NAME[k]?.id ?? k
+        merged.panelSizes = sanitizePanelSizes(saved.panelSizes)
+        merged.unitPrefs = Object.fromEntries(Object.entries(sanitizeUnitPrefs(saved.unitPrefs)).map(([k, v]) => [loggerKey(k), v]))
+        merged.autoZero = Array.isArray(saved.autoZero) ? [...new Set(saved.autoZero.filter((k): k is string => typeof k === 'string').map(loggerKey))] : DEFAULT.autoZero
+        if (typeof saved.restCondition !== 'string' || saved.restCondition === OLD_DEFAULT_REST_CONDITION) merged.restCondition = DEFAULT.restCondition
+        if (typeof saved.restHoldS !== 'number' || !Number.isFinite(saved.restHoldS) || saved.restHoldS < 0) merged.restHoldS = DEFAULT.restHoldS
         if (!merged.widgetOrder.includes('steering')) {
           merged.widgetOrder = [...merged.widgetOrder]
           const gaugesIndex = merged.widgetOrder.indexOf('gauges')
           merged.widgetOrder.splice(gaugesIndex + 1, 0, 'steering')
         }
+        Object.assign(merged, normalizeProfiles(saved.profiles, saved.activeProfileId, snapshotOf(merged)))
         return merged
       }
     } catch { /* ignore */ }
-    return DEFAULT
+    return { ...DEFAULT, ...normalizeProfiles(null, null, snapshotOf(DEFAULT)) }
   })
   const [configTarget, setConfigTarget] = useState<ConfigTarget | null>(null)
 
   useEffect(() => {
-    try { localStorage.setItem(KEY, JSON.stringify(state)) } catch { /* ignore */ }
+    // The active profile's stored copy is refreshed on save (switching also does it).
+    try { localStorage.setItem(KEY, JSON.stringify(syncActive(state))) } catch { /* ignore */ }
   }, [state])
 
   const value: Ctx = {
@@ -409,6 +518,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     }),
     setTimeRange: patch => setState(s => ({ ...s, timeRange: { ...s.timeRange, ...patch } })),
     dropChannel: (channel, target) => setState(s => applyDrop(s, channel, null, target)),
+    discardTrace: (chartId, index) => setState(s => discardTrace(s, chartId, index)),
     dropTrace: (fromChartId, index, target) => setState(s => {
       const trace = s.chartCfg[fromChartId]?.traces[index]
       return trace ? applyDrop(s, trace.channel, { chartId: fromChartId, index, trace }, target) : s
@@ -422,6 +532,52 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setSupabaseMode: supabaseMode => setState(s => ({ ...s, supabaseMode })),
 
     setStaleAfterMs: staleAfterMs => setState(s => ({ ...s, staleAfterMs })),
+    setUnitPref: (key, unit) => setState(s => {
+      const unitPrefs = { ...s.unitPrefs }
+      if (unit === null) delete unitPrefs[key]
+      else unitPrefs[key] = unit
+      return { ...s, unitPrefs }
+    }),
+    setAutoZero: (key, on) => setState(s => ({ ...s, autoZero: on ? [...new Set([...s.autoZero, key])] : s.autoZero.filter(k => k !== key) })),
+    setRestCondition: restCondition => setState(s => ({ ...s, restCondition })),
+    setRestHoldS: restHoldS => setState(s => ({ ...s, restHoldS })),
+    setPanelSizes: patch => setState(s => ({ ...s, panelSizes: applySizePatch(s.panelSizes, patch) })),
+    resetPanelSizes: () => setState(s => ({ ...s, panelSizes: {} })),
+    switchProfile: id => {
+      setConfigTarget(null)
+      setState(s => switchProfile(s, id))
+    },
+    addProfile: presetId => {
+      setConfigTarget(null)
+      setState(s => {
+        const spec = presetId ? PRESET_BY_ID[presetId] : PRESET_BY_ID.blank
+        return spec ? addProfile(s, { name: spec.name, data: buildPresetData(spec, makeTrace, DEFAULT.layout, DEFAULT.widgetOrder), presetId: spec.id }) : s
+      })
+    },
+    duplicateProfile: () => {
+      setConfigTarget(null)
+      setState(s => duplicateProfile(s))
+    },
+    renameProfile: (id, name) => setState(s => renameProfile(s, id, name)),
+    deleteProfile: id => {
+      setConfigTarget(null)
+      setState(s => deleteProfile(s, id))
+    },
+    resetProfileToPreset: () => {
+      setConfigTarget(null)
+      setState(s => {
+        const spec = PRESET_BY_ID[s.profiles.find(p => p.id === s.activeProfileId)?.presetId ?? '']
+        return spec ? replaceActive(s, buildPresetData(spec, makeTrace, DEFAULT.layout, DEFAULT.widgetOrder)) : s
+      })
+    },
+    exportProfile: id => exportProfile(syncActive(state), id),
+    importProfile: text => {
+      const result = parseProfileImport(text, normalizeProfileData)
+      if (!result.ok) return result.reason
+      setConfigTarget(null)
+      setState(s => addProfile(s, { name: result.name, data: result.data, presetId: result.presetId && PRESET_BY_ID[result.presetId] ? result.presetId : undefined }))
+      return null
+    },
     reset: () => setState(s => ({
       ...s,
       gauges: DEFAULT.gauges,
@@ -432,6 +588,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
       chartOrder: DEFAULT.chartOrder,
       chartCfg: DEFAULT.chartCfg,
       timeRange: DEFAULT.timeRange,
+      panelSizes: {},
     })),
     configTarget,
     openConfig: target => setConfigTarget(target),
