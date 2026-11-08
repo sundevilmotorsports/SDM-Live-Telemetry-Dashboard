@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { isPublishableKey, normalizeSupabaseUrl, sanitizeStatusError } from '../live/broadcastClient'
-import type { DataFreshness } from '../live/types'
+import type { ChannelState, DataFreshness } from '../live/types'
 import type { MappedFrame } from '../live/mapToFrame'
 import { RawBatchSession, RAW_EMPTY_DIAGNOSTICS, type RawBatchSnapshot } from './RawBatchSession'
 import { createSupabaseBatchClient } from './supabaseBatches'
@@ -25,11 +25,15 @@ export function useSupabaseRaw(options: {
   signedIn: boolean
   staleAfterMs: number
   onAccepted?: (frame: MappedFrame) => void
+  /** Called for every accepted CAN frame with the live channel state (not resampled). */
+  onChannels?: (channels: ChannelState) => void
 }): SupabaseRaw {
   const [snapshot, setSnapshot] = useState<SupabaseRaw>(IDLE)
   const [nowMs, setNowMs] = useState(Date.now)
   const onAccepted = useRef(options.onAccepted)
   onAccepted.current = options.onAccepted
+  const onChannels = useRef(options.onChannels)
+  onChannels.current = options.onChannels
   const staleAfter = useRef(options.staleAfterMs)
   staleAfter.current = options.staleAfterMs
 
@@ -57,7 +61,9 @@ export function useSupabaseRaw(options: {
         sessionId,
         staleAfterMs: staleAfter.current,
         onSample: next => {
-          if (!stopped) onAccepted.current?.(rawChannelsToFrame(next.channels, next.sessionStartUs, next.latestSampleUs))
+          if (stopped) return
+          onChannels.current?.(next.channels)
+          onAccepted.current?.(rawChannelsToFrame(next.channels, next.sessionStartUs, next.latestSampleUs))
         },
       })
       const unsubscribe = session.subscribe(next => {

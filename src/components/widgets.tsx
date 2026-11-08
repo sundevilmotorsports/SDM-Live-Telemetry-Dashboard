@@ -5,6 +5,8 @@ import {
 } from '../telemetry/simulation'
 import { MathChannel, type SupabaseMode } from '../state/ConfigContext'
 import { evalExpr } from '../telemetry/expression'
+import { convertValue, resolveUnit, type UnitDef, type UnitPrefs } from '../telemetry/units'
+import { deltaUnit, zeroedValue, type Baselines } from '../telemetry/zeroing'
 
 // Resolve any channel/math id to a value + display metadata for the given frame
 export function resolveChannel(id: string, f: Frame, math: MathChannel[]): { value: number; def: Omit<ChannelDef, 'get'> } {
@@ -18,6 +20,27 @@ export function resolveChannel(id: string, f: Frame, math: MathChannel[]): { val
   const c = CHANNEL_MAP[id] ?? CHANNEL_MAP['speed']
   const { get, ...def } = c
   return { value: c.get(f), def }
+}
+
+/**
+ * resolveChannel in the user's chosen display unit: value, range, and unit label are
+ * converted; `conv` lets callers convert gauge/chart limits the same way. The channel's
+ * data, alerts, and math stay in the base unit.
+ */
+export function resolveChannelDisplay(id: string, f: Frame, math: MathChannel[], prefs: UnitPrefs, baselines: Baselines = {}): { value: number; def: Omit<ChannelDef, 'get'>; conv: UnitDef; zeroed: boolean } {
+  const { value, def } = resolveChannel(id, f, math)
+  const conv = resolveUnit(def.unit, prefs[id])
+  const z = zeroedValue(value, baselines[id], f.t)
+  return { value: convertValue(z.value, z.zeroed ? deltaUnit(conv) : conv), def: { ...def, unit: conv.label, min: convertValue(def.min, conv), max: convertValue(def.max, conv) }, conv, zeroed: z.zeroed }
+}
+
+/** Per-frame getter for charts: chosen unit, minus the baseline that was in effect at that frame's time. */
+export function channelDisplayGetter(id: string, math: MathChannel[], conv: UnitDef, baselines: Baselines): (f: Frame) => number {
+  const segments = baselines[id]
+  return f => {
+    const z = zeroedValue(resolveChannel(id, f, math).value, segments, f.t)
+    return convertValue(z.value, z.zeroed ? deltaUnit(conv) : conv)
+  }
 }
 
 // ── Widget Controls (drag handle + gear) ────────────────────────────────────
@@ -94,7 +117,7 @@ export function ArcGauge({ value, min, max, label, unit, color, warningAt, dange
         {ticks.map((tk, i) => (
           <g key={i}>
             <line x1={tk.x1} y1={tk.y1} x2={tk.x2} y2={tk.y2} stroke={tk.major ? '#3e3e3e' : '#272727'} strokeWidth={tk.major ? '1' : '0.5'} />
-            {tk.major && <text x={tk.lx} y={tk.ly + 2} textAnchor="middle" fontSize="4.5" fill="#303030" fontFamily="monospace">{tk.tickVal}</text>}
+            {tk.major && <text x={tk.lx} y={tk.ly + 2} textAnchor="middle" fontSize="4.5" fill="#888888" fontFamily="monospace">{tk.tickVal}</text>}
           </g>
         ))}
         {known && <line x1={cx - 4 * Math.cos(needleRad)} y1={cy - 4 * Math.sin(needleRad)} x2={cx + nLen * Math.cos(needleRad)} y2={cy + nLen * Math.sin(needleRad)} stroke="rgba(0,0,0,0.7)" strokeWidth="4" strokeLinecap="round" />}
@@ -102,8 +125,8 @@ export function ArcGauge({ value, min, max, label, unit, color, warningAt, dange
         <circle cx={cx} cy={cy} r="6.5" fill="#111111" stroke="#2a2a2a" strokeWidth="1" />
         <circle cx={cx} cy={cy} r="2.5" fill={known ? fg : '#333'} filter={`url(#${fid})`} />
         <text x={cx} y={cy + 21} textAnchor="middle" fontSize="17" fontWeight="700" fill={known ? fg : '#555'} fontFamily="monospace">{known ? value.toFixed(dp) : '—'}</text>
-        <text x={cx} y={cy + 31} textAnchor="middle" fontSize="6" fill="#3a3a3a" fontFamily="monospace">{unit}</text>
-        <text x={cx} y={cy + 42} textAnchor="middle" fontSize="4.5" fill="#2e2e2e" fontFamily="monospace" letterSpacing="2">{label.toUpperCase()}</text>
+        <text x={cx} y={cy + 31} textAnchor="middle" fontSize="6" fill="#8c8c8c" fontFamily="monospace">{unit}</text>
+        <text x={cx} y={cy + 42} textAnchor="middle" fontSize="4.5" fill="#878787" fontFamily="monospace" letterSpacing="2">{label.toUpperCase()}</text>
       </svg>
     </div>
   )
@@ -145,12 +168,12 @@ export function BarGauge({ value, min, max, label, unit, color, warningAt, dange
   })
   const readout = (
     <div className="flex flex-col items-center" style={{ flexShrink: 0 }}>
-      <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: known ? fg : '#555', lineHeight: 1 }}>{known ? value.toFixed(dp) : '—'}</span>
-      <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a' }}>{known ? unit : 'N/A'}</span>
+      <span style={{ fontFamily: MONO, fontSize: 18, fontWeight: 700, color: known ? fg : '#989898', lineHeight: 1 }}>{known ? value.toFixed(dp) : '—'}</span>
+      <span style={{ fontFamily: MONO, fontSize: 8, color: '#8c8c8c' }}>{known ? unit : 'N/A'}</span>
     </div>
   )
-  const title = <span style={{ fontFamily: MONO, fontSize: 7, color: '#3a3a3a', letterSpacing: '0.2em', textAlign: 'center' }}>{label.toUpperCase()}</span>
-  const scale = (v: number) => <span style={{ fontFamily: MONO, fontSize: 7, color: '#303030' }}>{Number.isInteger(v) ? v : v.toFixed(1)}</span>
+  const title = <span style={{ fontFamily: MONO, fontSize: 7, color: '#8c8c8c', letterSpacing: '0.2em', textAlign: 'center' }}>{label.toUpperCase()}</span>
+  const scale = (v: number) => <span style={{ fontFamily: MONO, fontSize: 7, color: '#888888' }}>{Number.isInteger(v) ? v : v.toFixed(1)}</span>
 
   if (vertical) {
     return (
@@ -174,15 +197,15 @@ export function BarGauge({ value, min, max, label, unit, color, warningAt, dange
 }
 
 // ── Vertical Bar Meter ─────────────────────────────────────────────────────
-export function VBar({ value, min = 0, max, label, unit, color, noTopDanger }: {
-  value: number; min?: number; max: number; label: string; unit: string; color: string; noTopDanger?: boolean
+export function VBar({ value, min = 0, max, label, unit, color, noTopDanger, dp }: {
+  value: number; min?: number; max: number; label: string; unit: string; color: string; noTopDanger?: boolean; dp?: number
 }) {
   const SEGS = 20
   const known = Number.isFinite(value)
   const filled = known ? Math.round(clamp((value - min) / (max - min), 0, 1) * SEGS) : 0
   return (
     <div className="flex flex-col items-center gap-1" style={{ flex: 1 }}>
-      <div style={{ fontFamily: MONO, fontSize: 8, color: '#444', letterSpacing: '0.2em' }}>{label}</div>
+      <div style={{ fontFamily: MONO, fontSize: 8, color: '#919191', letterSpacing: '0.2em' }}>{label}</div>
       <div className="flex flex-col-reverse" style={{ gap: 2 }}>
         {Array.from({ length: SEGS }, (_, i) => {
           const active = i < filled
@@ -193,7 +216,7 @@ export function VBar({ value, min = 0, max, label, unit, color, noTopDanger }: {
         })}
       </div>
       <div style={{ fontFamily: MONO, fontSize: 11, color, fontWeight: 700 }}>
-        {known ? value.toFixed(noTopDanger ? 1 : 0) : '—'}<span style={{ color: '#383838', fontSize: 8 }}>{known ? unit : 'N/A'}</span>
+        {known ? value.toFixed(dp ?? (noTopDanger ? 1 : 0)) : '—'}<span style={{ color: '#8b8b8b', fontSize: 8 }}>{known ? unit : 'N/A'}</span>
       </div>
     </div>
   )
@@ -215,12 +238,12 @@ export function FrictionCircle({ frames }: { frames: Frame[] }) {
         {[1, 2, 3].map(g => <circle key={g} cx={cx} cy={cy} r={r * g / MAX_G} fill="none" stroke={g === MAX_G ? '#272727' : '#1e1e1e'} strokeWidth={g === MAX_G ? '0.8' : '0.4'} strokeDasharray={g < MAX_G ? '2 3' : '0'} />)}
         <line x1={cx - r} y1={cy} x2={cx + r} y2={cy} stroke="#1d1d1d" strokeWidth="0.5" />
         <line x1={cx} y1={cy - r} x2={cx} y2={cy + r} stroke="#1d1d1d" strokeWidth="0.5" />
-        <text x={cx + r * (1 / 3) + 1.5} y={cy - 1} fontSize="3.5" fill="#252525" fontFamily="monospace">1G</text>
-        <text x={cx + r * (2 / 3) + 1.5} y={cy - 1} fontSize="3.5" fill="#252525" fontFamily="monospace">2G</text>
-        <text x={cx} y={5.5} textAnchor="middle" fontSize="3.5" fill="#2e2e2e" fontFamily="monospace">+Gy ACCEL</text>
-        <text x={cx} y={98} textAnchor="middle" fontSize="3.5" fill="#2e2e2e" fontFamily="monospace">-Gy BRAKE</text>
-        <text x={2} y={cy + 1.5} fontSize="3" fill="#2a2a2a" fontFamily="monospace">-Gx</text>
-        <text x={85} y={cy + 1.5} fontSize="3" fill="#2a2a2a" fontFamily="monospace">+Gx</text>
+        <text x={cx + r * (1 / 3) + 1.5} y={cy - 1} fontSize="3.5" fill="#838383" fontFamily="monospace">1G</text>
+        <text x={cx + r * (2 / 3) + 1.5} y={cy - 1} fontSize="3.5" fill="#838383" fontFamily="monospace">2G</text>
+        <text x={cx} y={5.5} textAnchor="middle" fontSize="3.5" fill="#878787" fontFamily="monospace">+Gy ACCEL</text>
+        <text x={cx} y={98} textAnchor="middle" fontSize="3.5" fill="#878787" fontFamily="monospace">-Gy BRAKE</text>
+        <text x={2} y={cy + 1.5} fontSize="3" fill="#858585" fontFamily="monospace">-Gx</text>
+        <text x={85} y={cy + 1.5} fontSize="3" fill="#858585" fontFamily="monospace">+Gx</text>
         {trail.map((f, i) => {
           if (!Number.isFinite(f.gX) || !Number.isFinite(f.gY)) return null
           const [x, y] = toXY(f.gX, f.gY)
@@ -257,7 +280,7 @@ export function GpsTrackMap({ lapFrac }: { lapFrac: number }) {
         {hasLap && <circle cx={carX} cy={carY} r="7" fill="#00ffff" opacity="0.08" filter="url(#car-glow)" />}
         {hasLap && <circle cx={carX} cy={carY} r="4" fill="#00ffff" opacity="0.15" />}
         {hasLap && <circle cx={carX} cy={carY} r="2.5" fill="#00ffff" filter="url(#car-glow)" />}
-        <text x={100} y={136} textAnchor="middle" fontSize="5" fill="#2a2a2a" fontFamily="monospace" letterSpacing="2">{hasLap ? 'GPS CIRCUIT MAP' : 'NO MEASURED LAP POSITION'}</text>
+        <text x={100} y={136} textAnchor="middle" fontSize="5" fill="#858585" fontFamily="monospace" letterSpacing="2">{hasLap ? 'GPS CIRCUIT MAP' : 'NO MEASURED LAP POSITION'}</text>
       </svg>
     </div>
   )
@@ -288,7 +311,7 @@ export function SuspHistogram({ frames, getVal, label, color }: { frames: Frame[
           <span style={{ fontFamily: MONO, fontSize: 8, color, letterSpacing: '0.18em', opacity: 0.9 }}>{label}</span>
         </div>
         <span style={{ fontFamily: MONO, fontSize: 9, color, fontWeight: 700 }}>
-          {curKnown ? `${cur >= 0 ? '+' : ''}${cur.toFixed(0)}` : '—'}<span style={{ color: '#383838', fontSize: 7, marginLeft: 1 }}>{curKnown ? 'mm/s' : 'N/A'}</span>
+          {curKnown ? `${cur >= 0 ? '+' : ''}${cur.toFixed(0)}` : '—'}<span style={{ color: '#8b8b8b', fontSize: 7, marginLeft: 1 }}>{curKnown ? 'mm/s' : 'N/A'}</span>
         </span>
       </div>
       <div className="relative flex-1 bg-[#191919]">
@@ -298,8 +321,8 @@ export function SuspHistogram({ frames, getVal, label, color }: { frames: Frame[
           </defs>
           {[-W / 4, W / 4].map(ox => <line key={ox} x1={cx + ox} y1={0} x2={cx + ox} y2={H} stroke="#1e1e1e" strokeWidth="0.5" strokeDasharray="3 3" />)}
           <line x1={cx} y1={0} x2={cx} y2={H} stroke="#303030" strokeWidth="1" />
-          <text x={4} y={6} fontSize="4" fill="#2a2a2a" fontFamily="monospace">REBOUND</text>
-          <text x={W - 4} y={6} fontSize="4" fill="#2a2a2a" fontFamily="monospace" textAnchor="end">BUMP</text>
+          <text x={4} y={6} fontSize="4" fill="#858585" fontFamily="monospace">REBOUND</text>
+          <text x={W - 4} y={6} fontSize="4" fill="#858585" fontFamily="monospace" textAnchor="end">BUMP</text>
           {counts.map((count, i) => {
             if (count === 0) return null
             const barHalf = (count / maxCount) * (cx - 6)
@@ -444,19 +467,19 @@ export function StatusBar({
       {cur && ([
         { label: 'LAP', val: Number.isFinite(cur.lapNum) ? String(cur.lapNum) : '—', color: '#e0e0e0' },
         { label: 'L-TIME', val: fmtTime(cur.lapTime), color: '#00ffff' },
-        { label: 'SESSION', val: fmtTime(cur.t), color: '#606060' },
+        { label: 'SESSION', val: fmtTime(cur.t), color: '#9d9d9d' },
         { label: 'GEAR', val: Number.isFinite(cur.gear) ? String(Math.round(cur.gear)) : '—', color: '#ffff00', large: true },
-        { label: 'FUEL', val: Number.isFinite(cur.fuel) ? `${cur.fuel.toFixed(0)}%` : '—', color: Number.isFinite(cur.fuel) && cur.fuel < 15 ? '#ff3333' : '#888' },
+        { label: 'FUEL', val: Number.isFinite(cur.fuel) ? `${cur.fuel.toFixed(0)}%` : '—', color: Number.isFinite(cur.fuel) && cur.fuel < 15 ? '#ff3333' : '#aeaeae' },
       ] as { label: string; val: string; color: string; large?: boolean }[]).map(({ label, val, color, large }) => (
         <div key={label} className="flex items-center gap-1.5 px-3 border-r border-[#1e1e1e] h-full">
-          <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#303030', letterSpacing: '0.1em' }}>{label}</span>
+          <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#888888', letterSpacing: '0.1em' }}>{label}</span>
           <span style={{ fontFamily: MONO, fontSize: large ? 14 : 11, color, fontWeight: 700, lineHeight: 1 }}>{val}</span>
         </div>
       ))}
       <div style={{ flex: 1 }} />
 
       <div className="flex items-center px-3 h-full border-l border-[#1e1e1e]">
-        <span style={{ fontFamily: MONO, fontSize: 7, color: '#333', letterSpacing: '0.2em' }}>TELEMETRY BRIDGE v2.5</span>
+        <span style={{ fontFamily: MONO, fontSize: 7, color: '#898989', letterSpacing: '0.2em' }}>TELEMETRY BRIDGE v2.5</span>
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
-import loggerConfig from './loggerConfig.json'
+import vendoredConfig from './loggerConfig.json'
+import canExtensions from './canExtensions.json'
 
 /**
  * Provenance: sundevilmotorsports/logger@9338e3cfb6c77be5bfc485b3cc75e502d610514e
@@ -28,6 +29,16 @@ export interface LoggerConfig {
       Muxed: { byte: number; groups: { type_val: number; signals: CanSignal[] }[] }
     }
   }[]
+}
+
+/**
+ * The vendored logger config plus dashboard-side frames (canExtensions.json), e.g. a logger
+ * ADC broadcast. Duplicate ID/extd pairs are rejected per frame as 'ambiguous-id', so an
+ * extension that collides with a logger device is visible instead of silently winning.
+ */
+export const loggerConfig: LoggerConfig & { adc_channels: { name: string; channel: number }[] } = {
+  ...vendoredConfig,
+  can_devices: [...(vendoredConfig as LoggerConfig).can_devices, ...(canExtensions.can_devices as LoggerConfig['can_devices'])],
 }
 
 export type DecodedCanFrame = {

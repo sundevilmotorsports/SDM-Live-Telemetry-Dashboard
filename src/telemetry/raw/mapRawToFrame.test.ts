@@ -1,3 +1,4 @@
+import { rawValues } from './loggerChannels'
 import { describe, expect, it } from 'vitest'
 import type { ChannelState } from '../live/types'
 import { decodeCanFrame } from './decodeCanFrame'
@@ -11,8 +12,10 @@ describe('rawChannelsToFrame', () => {
   it('leaves every field NaN when no data has arrived, even with a session origin', () => {
     for (const start of [null, 1_000_000]) {
       const result = rawChannelsToFrame({}, start)
-      expect(Object.values(result.frame).every(Number.isNaN)).toBe(true)
-      expect(result.unavailableFields.sort()).toEqual(Object.keys(result.frame).sort())
+      const { raw, ...fields } = result.frame
+      expect(Object.values(fields).every(Number.isNaN)).toBe(true)
+      expect(rawValues(raw)).toEqual({})
+      expect(result.unavailableFields.sort()).toEqual(Object.keys(fields).sort())
       expect(result.unmappedChannels).toEqual([])
     }
   })
@@ -41,7 +44,12 @@ describe('rawChannelsToFrame', () => {
     const state = channels(values)
     const snapshot = structuredClone(state)
     const result = rawChannelsToFrame(state, null)
-    expect(Object.values(result.frame).every(Number.isNaN)).toBe(true)
+    const { raw, ...fields } = result.frame
+    expect(Object.values(fields).every(Number.isNaN)).toBe(true)
+    // Unmapped dashboard fields stay NaN, but every logger channel is still available for raw:<name> charts and math.
+    // ('engine.rpm' etc. are not logger channels and have no slot.)
+    const loggerOnly = Object.fromEntries(Object.entries(values).filter(([k]) => !k.includes('.')))
+    expect(rawValues(raw)).toEqual(loggerOnly)
     expect(result.unmappedChannels.sort()).toEqual(Object.keys(values).sort())
     expect(state).toEqual(snapshot)
     for (const field of ['brake', 'steering', 'oilPress', 'gX', 'gY', 'wFL', 'speed', 'suspFR', 'lapTime', 'lapNum', 'volt']) {

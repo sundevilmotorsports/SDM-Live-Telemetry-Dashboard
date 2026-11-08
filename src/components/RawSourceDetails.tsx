@@ -2,8 +2,8 @@ import { MONO } from '../telemetry/simulation'
 import { useTelemetryStatus } from '../state/TelemetryStatusContext'
 import { RAW_DASHBOARD_MAPPINGS } from '../telemetry/raw/mapRawToFrame'
 
-const textStyle = { fontFamily: MONO, fontSize: 8, color: '#999', lineHeight: 1.6 }
-const headingStyle = { ...textStyle, color: '#ccc', letterSpacing: '0.1em' }
+const textStyle = { fontFamily: MONO, fontSize: 8, color: '#b6b6b6', lineHeight: 1.6 }
+const headingStyle = { ...textStyle, color: '#cccccc', letterSpacing: '0.1em' }
 
 export default function RawSourceDetails() {
   const telemetry = useTelemetryStatus()

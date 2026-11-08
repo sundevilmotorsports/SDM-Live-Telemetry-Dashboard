@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { MONO, CHANNELS, CHANNEL_MAP } from '../telemetry/simulation'
+import { MONO, ALL_CHANNELS, CHANNEL_MAP } from '../telemetry/simulation'
 import { isValidExpr } from '../telemetry/expression'
 import { WHEEL_REFERENCE_DESCRIPTION } from '../telemetry/wheelSpeed'
 import { useConfig, GaugeConfig, AlertRule, MathChannel, ConfigTarget, DEFAULT_STALE_MS, GAUGE_STYLES } from '../state/ConfigContext'
@@ -11,8 +11,8 @@ import { publicHost } from '../telemetry/live/broadcastClient'
 import RawSourceDetails from './RawSourceDetails'
 import SessionControls from './SessionControls'
 
-const selectStyle: React.CSSProperties = { backgroundColor: '#1a1a1a', color: '#999', border: '1px solid #2e2e2e', fontFamily: MONO, fontSize: 9, padding: '4px 6px', borderRadius: 3, width: '100%', outline: 'none' }
-const labelStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.12em' }
+const selectStyle: React.CSSProperties = { backgroundColor: '#1a1a1a', color: '#b6b6b6', border: '1px solid #2e2e2e', fontFamily: MONO, fontSize: 9, padding: '4px 6px', borderRadius: 3, width: '100%', outline: 'none' }
+const labelStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#8c8c8c', letterSpacing: '0.12em' }
 const num = (v: number | null): string => (v == null ? '' : String(v))
 const SWATCHES = ['#00ff41', '#ff3333', '#ffff00', '#00ffff', '#4488ff', '#c88bff', '#ff8800', '#33ff99', '#ff6644', '#00ffaa']
 
@@ -25,7 +25,7 @@ function Section({ title, open, onToggle, children }: { title: string; open: boo
     <>
       <button onClick={onToggle} style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', padding: '6px 8px', borderRadius: 4,
-        backgroundColor: open ? '#4488ff14' : '#1a1a1a', color: open ? '#4488ff' : '#666', fontFamily: MONO, fontSize: 9,
+        backgroundColor: open ? '#4488ff14' : '#1a1a1a', color: open ? '#4488ff' : '#9f9f9f', fontFamily: MONO, fontSize: 9,
         letterSpacing: '0.15em', cursor: 'pointer', border: 'none', borderLeft: open ? '2px solid #4488ff55' : '2px solid transparent',
       }}>
         <span>{title}</span><span style={{ fontSize: 8 }}>{open ? '▲' : '▼'}</span>
@@ -62,7 +62,8 @@ export function WidgetConfigModal() {
   const t = (k: keyof typeof open) => setOpen(o => ({ ...o, [k]: !o[k] }))
 
   const channelOpts = [
-    ...CHANNELS.map(c => ({ value: c.id, label: `${c.label} (${c.unit || '—'})` })),
+    // Every channel, including every logger channel (grouped like the channel list).
+    ...ALL_CHANNELS.map(c => ({ value: c.id, label: `${c.group ? `${c.group} · ` : ''}${c.label} (${c.unit || '—'})` })),
     ...cfg.math.map(m => ({ value: `math:${m.id}`, label: `∑ ${m.name}` })),
   ]
   const updateGauge = (id: string, patch: Partial<GaugeConfig>) => cfg.setGauges(cfg.gauges.map(g => (g.id === id ? { ...g, ...patch } : g)))
@@ -84,7 +85,7 @@ export function WidgetConfigModal() {
 
         <div className="flex flex-col gap-1">
           <span style={labelStyle}>TRACES · EACH ON ITS OWN SCALE</span>
-          <span style={{ ...labelStyle, color: '#2e2e2e' }}>ON THE CHART: CLICK A NAME TO HIGHLIGHT IT · CLICK ITS DOT TO HIDE/SHOW</span>
+          <span style={{ ...labelStyle, color: '#878787' }}>ON THE CHART: CLICK A NAME TO HIGHLIGHT IT · CLICK ITS DOT TO HIDE/SHOW</span>
         </div>
 
         {chart.traces.map((tr, i) => (
@@ -242,12 +243,12 @@ export function WidgetConfigModal() {
         <div style={{ width: 28, height: 14, borderRadius: 7, backgroundColor: cfg.layout[key] ? '#4488ff' : '#2a2a2a', position: 'relative', flexShrink: 0 }}>
           <div style={{ position: 'absolute', top: 2, left: cfg.layout[key] ? 16 : 2, width: 10, height: 10, borderRadius: '50%', backgroundColor: '#fff', transition: 'left 0.15s' }} />
         </div>
-        <span style={{ fontFamily: MONO, fontSize: 8, color: '#484848' }}>{label}</span>
+        <span style={{ fontFamily: MONO, fontSize: 8, color: '#929292' }}>{label}</span>
       </label>
     ))
   }
 
-  const descriptor = (text: string) => <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a', lineHeight: 1.6, letterSpacing: '0.05em' }}>{text}</span>
+  const descriptor = (text: string) => <span style={{ fontFamily: MONO, fontSize: 8, color: '#8c8c8c', lineHeight: 1.6, letterSpacing: '0.05em' }}>{text}</span>
 
   const sourceEditor = (
     <div className="flex flex-col gap-3">
@@ -269,7 +270,7 @@ export function WidgetConfigModal() {
             </span>
             <div style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #c88bff', backgroundColor: cfg.telemetrySource === 'simulation' ? '#c88bff' : 'transparent' }} />
           </div>
-          <span style={{ fontFamily: MONO, fontSize: 7, color: '#666', lineHeight: 1.4 }}>
+          <span style={{ fontFamily: MONO, fontSize: 7, color: '#9f9f9f', lineHeight: 1.4 }}>
             Synthetic 10 Hz vehicle dynamics generator.
           </span>
         </div>
@@ -288,7 +289,7 @@ export function WidgetConfigModal() {
             </span>
             <div style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #00ff41', backgroundColor: cfg.telemetrySource === 'websocket' ? '#00ff41' : 'transparent' }} />
           </div>
-          <span style={{ fontFamily: MONO, fontSize: 7, color: '#666', lineHeight: 1.4 }}>
+          <span style={{ fontFamily: MONO, fontSize: 7, color: '#9f9f9f', lineHeight: 1.4 }}>
             Direct network stream (CAN bridge, Wi-Fi, Cellular).
           </span>
         </div>
@@ -307,7 +308,7 @@ export function WidgetConfigModal() {
             </span>
             <div style={{ width: 8, height: 8, borderRadius: '50%', border: '2px solid #4488ff', backgroundColor: cfg.telemetrySource === 'supabase' ? '#4488ff' : 'transparent' }} />
           </div>
-          <span style={{ fontFamily: MONO, fontSize: 7, color: '#666', lineHeight: 1.4 }}>
+          <span style={{ fontFamily: MONO, fontSize: 7, color: '#9f9f9f', lineHeight: 1.4 }}>
             Raw CAN batches decoded locally, or legacy Broadcast.
           </span>
         </div>
@@ -327,7 +328,7 @@ export function WidgetConfigModal() {
           </div>
 
           <div className="flex items-center gap-1.5 mt-1">
-            <span style={{ fontFamily: MONO, fontSize: 7, color: '#444' }}>PRESETS:</span>
+            <span style={{ fontFamily: MONO, fontSize: 7, color: '#919191' }}>PRESETS:</span>
             {['ws://localhost:8765', 'ws://127.0.0.1:8765'].map(url => (
               <button
                 key={url}
@@ -349,7 +350,7 @@ export function WidgetConfigModal() {
           </div>
 
           <div className="mt-2 p-2 rounded" style={{ backgroundColor: '#0c0c0c', border: '1px solid #1a1a1a' }}>
-            <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#555', display: 'block', marginBottom: 4 }}>
+            <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#989898', display: 'block', marginBottom: 4 }}>
               To start the Python telemetry bridge in a terminal:
             </span>
             <code style={{ fontFamily: MONO, fontSize: 8, color: '#00ff41', display: 'block' }}>
@@ -395,7 +396,7 @@ export function WidgetConfigModal() {
             </svg>
             <span style={{ fontFamily: MONO, fontSize: 9, color: '#4488ff', letterSpacing: '0.2em', fontWeight: 700 }}>{TITLE(target, target.kind === 'chart' ? cfg.chartCfg[target.id]?.title : undefined)}</span>
           </div>
-          <button onClick={cfg.closeConfig} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontFamily: MONO, fontSize: 15 }}>✕</button>
+          <button onClick={cfg.closeConfig} style={{ background: 'none', border: 'none', color: '#989898', cursor: 'pointer', fontFamily: MONO, fontSize: 15 }}>✕</button>
         </div>
 
         {/* body */}
@@ -437,7 +438,7 @@ function MathQuickAdd({ onAdd }: { onAdd: (mathId: string) => void }) {
         <input value={unit} onChange={e => setUnit(e.target.value)} style={{ ...selectStyle, width: 56, flexShrink: 0 }} placeholder="unit" />
       </div>
       <input value={expr} onChange={e => setExpr(e.target.value)}
-        style={{ ...selectStyle, border: `1px solid ${expr === '' || valid ? '#2e2e2e' : '#ff3333'}`, color: valid ? '#c88bff' : '#999' }} placeholder="(wFL + wFR) / 2" />
+        style={{ ...selectStyle, border: `1px solid ${expr === '' || valid ? '#2e2e2e' : '#ff3333'}`, color: valid ? '#c88bff' : '#b6b6b6' }} placeholder="(wFL + wFR) / 2" />
       <div className="flex flex-wrap gap-1">
         {['speed', 'rpm', 'throttle', 'brake', 'gX', 'gY', 'volt', 'sqrt(', 'abs('].map(ch => (
           <span key={ch} onClick={() => setExpr(expr + ch)} style={{ fontFamily: MONO, fontSize: 7.5, color: '#4488ff', backgroundColor: '#4488ff14', padding: '2px 5px', borderRadius: 3, cursor: 'pointer', border: '1px solid #4488ff22' }}>{ch}</span>
@@ -462,7 +463,7 @@ function SupabaseSourcePanel() {
         <option value="raw">Raw CAN batches · process in this app</option>
         <option value="broadcast">Legacy decoded Realtime Broadcast</option>
       </select>
-      <span style={{ fontFamily: MONO, fontSize: 8, color: '#888', lineHeight: 1.5 }}>
+      <span style={{ fontFamily: MONO, fontSize: 8, color: '#aeaeae', lineHeight: 1.5 }}>
         {raw ? 'Polls telemetry.can_batches for the linked session (sign-in required). Switching session or input mode clears merged samples.' : 'Topic telemetry:live:<session>, event live. Switching session clears merged samples.'}
         {' '}Publishable or anon key only. Never paste a service-role key, secret key, or TELEMETRY_HMAC_KEY.
       </span>
@@ -485,24 +486,24 @@ function SupabaseSourcePanel() {
         }}
         style={{ ...selectStyle, fontSize: 9 }}
       />
-      <span style={{ fontFamily: MONO, fontSize: 7, color: '#444' }}>
+      <span style={{ fontFamily: MONO, fontSize: 7, color: '#919191' }}>
         Default {DEFAULT_STALE_MS} ms. {raw ? 'Polls every second; loads the whole session oldest-first, then catches up by batch ID. Charts resample to 10 Hz by frame ts_ms and play back about 2 s behind the newest sample. Freshness uses database receipt time.' : 'Groups broadcast about once per second, not at their 10 Hz sample rate.'} Host: {publicHost(cfg.supabaseUrl)}
       </span>
 
       {raw ? <RawSourceDetails /> : <>
       <div className="mt-1 p-2 rounded flex flex-col gap-1" style={{ backgroundColor: '#0c0c0c', border: '1px solid #1a1a1a' }}>
         <span style={labelStyle}>DIAGNOSTICS</span>
-        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#777', lineHeight: 1.55 }}>
+        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#a7a7a7', lineHeight: 1.55 }}>
           {diag
             ? `received ${diag.received} · accepted ${diag.accepted} · invalid ${diag.invalid} · old ${diag.ignoredOld} · rejected values ${diag.rejectedValues}`
             : 'Select this source to subscribe. Counts stay at zero until a live message arrives.'}
         </span>
-        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#777', lineHeight: 1.55 }}>
+        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#a7a7a7', lineHeight: 1.55 }}>
           {diag
             ? `groups [${diag.groupsSeen.join(', ') || '—'}] · last seq ${diag.lastSeq ?? '—'} · receipt ${fmtClock(diag.lastReceiptMs)} · accepted ${fmtClock(diag.lastAcceptedMs)} · sample age ${age == null ? '—' : `${age} ms local`}`
             : 'Subscribed is not the same as fresh. Broadcast does not replay a snapshot.'}
         </span>
-        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#666', lineHeight: 1.55 }}>
+        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#9f9f9f', lineHeight: 1.55 }}>
           {diag?.uplinkEstimateMs == null
             ? 'Timing estimates appear after the first accepted sample. They include clock skew.'
             : `uplink estimate ${Math.round(diag.uplinkEstimateMs)} ms · sample-age estimate ${diag.sampleAgeEstimateMs == null ? '—' : `${Math.round(diag.sampleAgeEstimateMs)} ms`} (clock skew, not measured latency)`}
@@ -512,21 +513,21 @@ function SupabaseSourcePanel() {
 
       <div className="p-2 rounded flex flex-col gap-1" style={{ backgroundColor: '#0c0c0c', border: '1px solid #1a1a1a' }}>
         <span style={labelStyle}>MAPPED FIELDS</span>
-        <span style={{ fontFamily: MONO, fontSize: 7, color: '#666', lineHeight: 1.5 }}>
+        <span style={{ fontFamily: MONO, fontSize: 7, color: '#9f9f9f', lineHeight: 1.5 }}>
           {DASHBOARD_FIELD_MAPPINGS.map(m => `${m.field} ← ${m.channelId}${m.toDashboard === 1 ? '' : ' ×0.01'}`).join(' · ')}
         </span>
         <span style={labelStyle}>UNAVAILABLE ON THIS SET</span>
-        <span style={{ fontFamily: MONO, fontSize: 7, color: '#555' }}>{UNMAPPED_DASHBOARD_FIELDS.join(', ')} — shown as —, not zero</span>
+        <span style={{ fontFamily: MONO, fontSize: 7, color: '#989898' }}>{UNMAPPED_DASHBOARD_FIELDS.join(', ')} — shown as —, not zero</span>
         <span style={labelStyle}>CHANNELS WITH NO DASHBOARD FIELD</span>
         <div className="flex flex-col gap-0.5" style={{ maxHeight: 140, overflowY: 'auto' }}>
           {(telemetry?.channelReadings ?? []).length === 0 && (
-            <span style={{ fontFamily: MONO, fontSize: 7, color: '#555' }}>None received yet. Unknown ids are kept here and are not dropped or zeroed.</span>
+            <span style={{ fontFamily: MONO, fontSize: 7, color: '#989898' }}>None received yet. Unknown ids are kept here and are not dropped or zeroed.</span>
           )}
           {(telemetry?.channelReadings ?? []).map(reading => {
             const def = LIVE_CHANNEL_MAP[reading.id]
             const mapped = DASHBOARD_FIELD_MAPPINGS.some(m => m.channelId === reading.id)
             return (
-              <span key={reading.id} style={{ fontFamily: MONO, fontSize: 7, color: mapped ? '#666' : '#9bd' }}>
+              <span key={reading.id} style={{ fontFamily: MONO, fontSize: 7, color: mapped ? '#9f9f9f' : '#9bd' }}>
                 {channelLabel(reading.id)}{def ? '' : ' (unknown id)'} = {reading.value} {def?.unit ?? ''}{mapped ? '' : ' · no dashboard field'}
               </span>
             )

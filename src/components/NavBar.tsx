@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
 import { MONO } from '../telemetry/simulation'
 
-export type NavId = 'workspace' | 'dash' | 'lap'
+export type NavId = 'workspace' | 'dash' | 'lap' | 'channels'
 
 const NAV_ITEMS: { id: NavId; label: string; icon: ReactNode }[] = [
   {
@@ -39,6 +39,17 @@ const NAV_ITEMS: { id: NavId; label: string; icon: ReactNode }[] = [
       </svg>
     ),
   },
+  {
+    id: 'channels', label: 'Channels',
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <rect x="2" y="3" width="14" height="12" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <line x1="2" y1="7" x2="16" y2="7" stroke="currentColor" strokeWidth="1" />
+        <line x1="2" y1="11" x2="16" y2="11" stroke="currentColor" strokeWidth="0.8" opacity="0.5" />
+        <line x1="8" y1="7" x2="8" y2="15" stroke="currentColor" strokeWidth="0.8" opacity="0.5" />
+      </svg>
+    ),
+  },
 ]
 
 const SettingsIcon = (
@@ -57,10 +68,10 @@ function NavTab({ active, label, onClick, children }: { active: boolean; label: 
     <button onClick={onClick} title={label} className="flex items-center gap-1.5 transition-colors"
       style={{
         height: '100%', padding: '0 12px', cursor: 'pointer', background: active ? '#4488ff12' : 'transparent',
-        color: active ? '#4488ff' : '#555', border: 'none', borderBottom: `2px solid ${active ? '#4488ff' : 'transparent'}`,
+        color: active ? '#4488ff' : '#989898', border: 'none', borderBottom: `2px solid ${active ? '#4488ff' : 'transparent'}`,
       }}
-      onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#999' }}
-      onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#555' }}>
+      onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#b6b6b6' }}
+      onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.color = '#989898' }}>
       <span className="flex items-center" style={{ transform: 'scale(0.8)' }}>{children}</span>
       <span style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.18em', whiteSpace: 'nowrap' }}>{label.toUpperCase()}</span>
     </button>
