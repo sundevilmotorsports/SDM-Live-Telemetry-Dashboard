@@ -1,0 +1,4 @@
+{
+  "_comment": "Dashboard-side CAN frames merged with the vendored logger config.json. Use for frames the logger transmits but does not itself log as CAN signals (e.g. its ADC broadcast), so the logger's SD-log columns are not duplicated. See docs/logger-channels.md. Signal names reuse the ADC channel names so those channels go live without other changes.",
+  "can_devices": []
+}

@@ -1,5 +1,6 @@
-import { useRef, useState, ReactNode } from 'react'
+import { Fragment, useRef, useState, ReactNode } from 'react'
 import { MONO } from '../telemetry/simulation'
+import { ResizePair } from './ResizeHandle'
 
 export interface StackItem {
   id: string
@@ -12,7 +13,13 @@ interface DragState { id: string; x: number; y: number; targetIdx: number; side:
 
 // Reusable VS Code-style dockable vertical stack: grab any `.panel-drag`
 // surface inside an item to reorder, with a translucent blue drop region + ghost.
-export function DraggableStack({ items, onReorder }: { items: StackItem[]; onReorder: (ids: string[]) => void }) {
+export function DraggableStack({ items, onReorder, onWeights, minPx = 48 }: {
+  items: StackItem[]
+  onReorder: (ids: string[]) => void
+  /** When given, a resize handle sits between neighbours. Keys are item ids; null clears a weight to its default. */
+  onWeights?: (patch: Record<string, number | null>) => void
+  minPx?: number
+}) {
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({})
   const dragRef = useRef<DragState | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -76,8 +83,12 @@ export function DraggableStack({ items, onReorder }: { items: StackItem[]; onReo
       {items.map((it, i) => {
         const isTarget = drag && drag.targetIdx === i && drag.id !== it.id
         return (
+          <Fragment key={it.id}>
+          {onWeights && i > 0 && (
+            <ResizePair axis="y" label={`Resize ${items[i - 1].title} / ${it.title}`} min={minPx} onWeights={onWeights}
+              a={{ key: items[i - 1].id, weight: items[i - 1].weight }} b={{ key: it.id, weight: it.weight }} />
+          )}
           <div
-            key={it.id}
             data-widx={it.id}
             ref={el => { itemRefs.current[it.id] = el }}
             style={{
@@ -93,6 +104,7 @@ export function DraggableStack({ items, onReorder }: { items: StackItem[]; onReo
               </div>
             )}
           </div>
+          </Fragment>
         )
       })}
 
@@ -111,7 +123,7 @@ export function DraggableStack({ items, onReorder }: { items: StackItem[]; onReo
             <span style={{ fontFamily: MONO, fontSize: 9, color: '#4488ff', letterSpacing: '0.2em', fontWeight: 700 }}>{ghostTitle}</span>
           </div>
           <div className="flex items-center justify-center flex-1" style={{ height: 'calc(100% - 24px)' }}>
-            <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.2em' }}>RELEASE TO DROP</span>
+            <span style={{ fontFamily: MONO, fontSize: 8, color: '#8c8c8c', letterSpacing: '0.2em' }}>RELEASE TO DROP</span>
           </div>
         </div>
       )}

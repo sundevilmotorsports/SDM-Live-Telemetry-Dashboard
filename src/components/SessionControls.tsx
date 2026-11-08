@@ -6,13 +6,13 @@ import {
   endSession, listSessions, signInWithPassword, signOut, startSession, type TelemetrySession,
 } from '../telemetry/sessions/sessionsApi'
 
-const inputStyle: React.CSSProperties = { backgroundColor: '#1a1a1a', color: '#999', border: '1px solid #2e2e2e', fontFamily: MONO, fontSize: 9, padding: '4px 6px', borderRadius: 3, width: '100%', outline: 'none' }
-const labelStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.12em' }
-const noteStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#888', lineHeight: 1.5 }
+const inputStyle: React.CSSProperties = { backgroundColor: '#1a1a1a', color: '#b6b6b6', border: '1px solid #2e2e2e', fontFamily: MONO, fontSize: 9, padding: '4px 6px', borderRadius: 3, width: '100%', outline: 'none' }
+const labelStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#8c8c8c', letterSpacing: '0.12em' }
+const noteStyle: React.CSSProperties = { fontFamily: MONO, fontSize: 8, color: '#aeaeae', lineHeight: 1.5 }
 
 function btn(color: string, enabled = true): React.CSSProperties {
   return {
-    fontFamily: MONO, fontSize: 8, color: enabled ? color : '#555', backgroundColor: `${enabled ? color : '#555'}12`,
+    fontFamily: MONO, fontSize: 8, color: enabled ? color : '#989898', backgroundColor: `${enabled ? color : '#555'}12`,
     border: `1px solid ${enabled ? color : '#555'}30`, padding: '5px 8px', borderRadius: 3, letterSpacing: '0.1em',
     cursor: enabled ? 'pointer' : 'not-allowed', opacity: enabled ? 1 : 0.6, flex: 1,
   }

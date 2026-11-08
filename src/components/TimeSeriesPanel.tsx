@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MONO, Frame, CHANNELS, clamp, fmtNum } from '../telemetry/simulation'
+import { MONO, Frame, CHANNELS, LOGGER_CHANNEL_DEFS, clamp, fmtNum } from '../telemetry/simulation'
+import { LOGGER_CHANNELS } from '../telemetry/raw/loggerChannels'
 import { useConfig, type ChartConfig, type DropTarget, type MathChannel } from '../state/ConfigContext'
 import type { Telemetry } from '../telemetry/useTelemetry'
 import { lapsFromFrames, lapsFromMarks, lapLength, bestLap, type LapSpan } from '../telemetry/laps'
@@ -9,7 +10,11 @@ import {
 } from '../telemetry/chartView'
 import { useLapMarks } from '../hooks/useLapMarks'
 import { DraggableStack, type StackItem } from './DraggableStack'
-import { WidgetControls, resolveChannel } from './widgets'
+import { WidgetControls, resolveChannelDisplay, channelDisplayGetter } from './widgets'
+import { ResizePx } from './ResizeHandle'
+import { useZeroing } from '../state/ZeroingContext'
+import { convertLevel, convertValue, resolveUnit } from '../telemetry/units'
+import { makeAvailability, recentRawReadings } from '../telemetry/channelAvailability'
 import { LegendWarnings } from './TelemetryAlerts'
 
 const W = 800
@@ -21,12 +26,12 @@ const TRACE_MIME = 'application/x-sdm-trace'
 function btn(active: boolean, color = '#4488ff'): React.CSSProperties {
   return {
     fontFamily: MONO, fontSize: 8, letterSpacing: '0.12em', padding: '2px 6px', borderRadius: 3, cursor: 'pointer',
-    color: active ? color : '#555', backgroundColor: active ? `${color}18` : 'transparent',
+    color: active ? color : '#989898', backgroundColor: active ? `${color}18` : 'transparent',
     border: `1px solid ${active ? `${color}55` : '#262626'}`,
   }
 }
 const inputStyle: React.CSSProperties = {
-  backgroundColor: '#161616', color: '#999', border: '1px solid #262626', fontFamily: MONO, fontSize: 8,
+  backgroundColor: '#161616', color: '#b6b6b6', border: '1px solid #262626', fontFamily: MONO, fontSize: 8,
   padding: '1px 4px', borderRadius: 3, outline: 'none',
 }
 
@@ -35,6 +40,7 @@ function isTyping(target: EventTarget | null): boolean {
   return !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
 }
 
+const isTraceDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(TRACE_MIME)
 const isOurDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(CHANNEL_MIME) || e.dataTransfer.types.includes(TRACE_MIME)
 
 /** Read a channel or trace drag and hand it to the config as a drop. */
@@ -51,36 +57,124 @@ function performDrop(e: React.DragEvent, target: DropTarget, dropChannel: (c: st
 type Zone = 'above' | 'into' | 'below'
 
 // ── Channel list (drag source, like MoTeC's channels pane) ──────────────────────
-function ChannelList({ onClose, charted, onDragState }: { onClose: () => void; charted: Set<string>; onDragState: (on: boolean) => void }) {
-  const { math, dropChannel, chartOrder } = useConfig()
+const LIVE_WHITE = '#ffffff'
+const NO_DATA_GRAY = '#8c8c8c'
+
+interface ListEntry {
+  id: string
+  label: string
+  unit: string
+  color: string
+  /** Shown but not draggable: no numeric value to plot (opaque bytes). */
+  plottable: boolean
+  note?: string
+}
+
+/** Logger groups in config order, each with its chartable channels and its hex-only ones. */
+const LOGGER_GROUPS: { name: string; entries: ListEntry[] }[] = (() => {
+  const groups = new Map<string, ListEntry[]>()
+  const defs = new Map(LOGGER_CHANNEL_DEFS.map(d => [d.id, d]))
+  for (const c of LOGGER_CHANNELS) {
+    if (c.mappedField) continue // shown as its dashboard channel
+    const def = defs.get(c.id)
+    const entry: ListEntry = def
+      ? { id: def.id, label: def.label, unit: def.unit, color: def.color, plottable: true, note: def.description }
+      : { id: c.id, label: c.name, unit: 'hex', color: '#919191', plottable: false, note: `${c.source}. ${c.note ?? ''}` }
+    groups.set(c.group, [...(groups.get(c.group) ?? []), entry])
+  }
+  return [...groups].map(([name, entries]) => ({ name, entries }))
+})()
+
+// MoTeC-style channel list: every channel (dashboard, math, and every logger channel) in
+// collapsible groups. White = receiving data now, gray = nothing recent; filled swatch = on a chart.
+function ChannelList({ telemetry, width, onClose, charted, onDragState }: { telemetry: Telemetry; width: number; onClose: () => void; charted: Set<string>; onDragState: (on: boolean) => void }) {
+  const { math, dropChannel, discardTrace, chartOrder, unitPrefs, telemetrySource, supabaseMode, staleAfterMs } = useConfig()
+  const [removeHot, setRemoveHot] = useState(false)
   const [q, setQ] = useState('')
-  const all = [
-    ...CHANNELS.map(c => ({ id: c.id, label: c.label, unit: c.unit, color: c.color })),
-    ...math.map(m => ({ id: `math:${m.id}`, label: `∑ ${m.name}`, unit: m.unit, color: '#c88bff' })),
+  const [openState, setOpenState] = useState<Record<string, boolean>>({})
+  const latest = telemetry.frames[telemetry.frames.length - 1]
+  const isLive = makeAvailability({
+    source: telemetrySource, mode: supabaseMode, stats: telemetry.channelStats, latest,
+    connected: telemetry.connectionStatus === 'connected',
+  })
+  const liveOpaque = new Set(supabaseMode === 'raw'
+    ? recentRawReadings(telemetry.rawReadings, telemetry.rawDiagnostics?.latestSampleUs, staleAfterMs, telemetry.freshness === 'fresh').map(r => `raw:${r.id}`)
+    : [])
+  const unitOf = (id: string, unit: string) => (unit === 'hex' ? unit : resolveUnit(unit, unitPrefs[id]).label)
+
+  const groups: { name: string; entries: ListEntry[] }[] = [
+    { name: 'Dashboard', entries: CHANNELS.map(c => ({ id: c.id, label: c.label, unit: c.unit, color: c.color, plottable: true, note: c.description })) },
+    ...(math.length ? [{ name: 'Math', entries: math.map(m => ({ id: `math:${m.id}`, label: `∑ ${m.name}`, unit: m.unit, color: '#c88bff', plottable: true })) }] : []),
+    ...LOGGER_GROUPS,
   ]
   const needle = q.trim().toLowerCase()
-  const shown = needle ? all.filter(c => c.label.toLowerCase().includes(needle) || c.id.toLowerCase().includes(needle)) : all
+  const live = (e: ListEntry) => (e.plottable ? isLive(e.id, math) : liveOpaque.has(e.id))
+
   return (
-    <div className="flex flex-col border-r border-[#242424] bg-[#121212]" style={{ width: 138, flexShrink: 0 }}>
+    // Dropping a chart trace anywhere on the list removes it from its chart (the inverse of dragging a channel out).
+    <div className="relative flex flex-col border-r border-[#242424] bg-[#121212]" style={{ width, flexShrink: 0 }}
+      onDragOver={e => { if (!isTraceDrag(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setRemoveHot(true) }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setRemoveHot(false) }}
+      onDrop={e => {
+        if (!isTraceDrag(e)) return
+        e.preventDefault()
+        setRemoveHot(false)
+        onDragState(false)
+        try {
+          const t = JSON.parse(e.dataTransfer.getData(TRACE_MIME)) as { chartId: string; index: number }
+          if (typeof t.chartId === 'string' && Number.isInteger(t.index)) discardTrace(t.chartId, t.index)
+        } catch { /* not ours */ }
+      }}>
+      {removeHot && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 5, backgroundColor: '#ff333318', border: '1px solid #ff3333aa' }}>
+          <span style={{ fontFamily: MONO, fontSize: 8, color: '#ff6655', letterSpacing: '0.15em', backgroundColor: '#0f0f0fdd', padding: '3px 6px', borderRadius: 3, textAlign: 'center', lineHeight: 1.5 }}>DROP TO REMOVE<br />FROM CHART</span>
+        </div>
+      )}
       <div className="flex items-center justify-between px-2 border-b border-[#1e1e1e]" style={{ height: 20 }}>
-        <span style={{ fontFamily: MONO, fontSize: 8, color: '#4a4a4a', letterSpacing: '0.2em' }}>CHANNELS</span>
-        <button onClick={onClose} title="Hide channel list" style={{ background: 'none', border: 'none', color: '#444', cursor: 'pointer', fontFamily: MONO, fontSize: 10 }}>‹</button>
+        <span style={{ fontFamily: MONO, fontSize: 8, color: '#939393', letterSpacing: '0.2em' }}>CHANNELS</span>
+        <button onClick={onClose} title="Hide channel list" style={{ background: 'none', border: 'none', color: '#919191', cursor: 'pointer', fontFamily: MONO, fontSize: 10 }}>‹</button>
       </div>
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="search…" style={{ ...inputStyle, margin: 4 }} />
       <div className="flex-1 overflow-y-auto">
-        {shown.map(c => (
-          <div key={c.id} draggable title="Drag onto a chart to overlay it, or onto a chart's top/bottom edge for a new chart. Double-click: new chart."
-            onDragStart={e => { e.dataTransfer.setData(CHANNEL_MIME, c.id); e.dataTransfer.effectAllowed = 'copy'; onDragState(true) }}
-            onDragEnd={() => onDragState(false)}
-            onDoubleClick={() => dropChannel(c.id, { kind: 'new', index: chartOrder.length })}
-            className="flex items-center gap-1.5 px-2 hover:bg-[#1c1c1c]" style={{ height: 17, cursor: 'grab' }}>
-            <span style={{ width: 6, height: 6, borderRadius: 1, backgroundColor: c.color, flexShrink: 0 }} />
-            <span style={{ fontFamily: MONO, fontSize: 8, color: charted.has(c.id) ? '#999' : '#5a5a5a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.label}</span>
-            {c.unit && <span style={{ fontFamily: MONO, fontSize: 7, color: '#333', marginLeft: 'auto', flexShrink: 0 }}>{c.unit}</span>}
-          </div>
-        ))}
+        {groups.map(group => {
+          const shown = needle ? group.entries.filter(e => e.label.toLowerCase().includes(needle) || e.id.toLowerCase().includes(needle)) : group.entries
+          if (shown.length === 0) return null
+          const liveCount = group.entries.filter(live).length
+          // Default: dashboard/math open, logger groups open only while something in them is live.
+          const open = needle ? true : openState[group.name] ?? (group.name === 'Dashboard' || group.name === 'Math' || liveCount > 0)
+          return (
+            <div key={group.name}>
+              <button onClick={() => setOpenState(o => ({ ...o, [group.name]: !open }))}
+                className="flex items-center w-full px-1.5 hover:bg-[#1a1a1a]"
+                style={{ height: 16, background: 'none', border: 'none', borderBottom: '1px solid #1a1a1a', cursor: 'pointer', fontFamily: MONO, fontSize: 7, letterSpacing: '0.12em', color: '#9f9f9f' }}>
+                <span style={{ width: 8 }}>{open ? '▾' : '▸'}</span>
+                <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{group.name.toUpperCase()}</span>
+                <span style={{ marginLeft: 'auto', color: liveCount ? '#b6b6b6' : '#8c8c8c' }}>{liveCount}/{group.entries.length}</span>
+              </button>
+              {open && shown.map(c => {
+                const isOn = live(c)
+                const onChart = charted.has(c.id)
+                return (
+                  <div key={c.id} draggable={c.plottable}
+                    title={`${isOn ? 'Receiving data' : 'No data'}${onChart ? ' · on a chart' : ''}.${c.note ? ` ${c.note}` : ''}${c.plottable ? ' Drag onto a chart to overlay it, or onto a chart\'s top/bottom edge for a new chart. Double-click: new chart.' : ' Not plottable: see the Channels tab for its bytes.'}`}
+                    onDragStart={e => { if (!c.plottable) return; e.dataTransfer.setData(CHANNEL_MIME, c.id); e.dataTransfer.effectAllowed = 'copy'; onDragState(true) }}
+                    onDragEnd={() => onDragState(false)}
+                    onDoubleClick={() => { if (c.plottable) dropChannel(c.id, { kind: 'new', index: chartOrder.length }) }}
+                    className="flex items-center gap-1.5 px-2 hover:bg-[#1c1c1c]" style={{ height: 17, cursor: c.plottable ? 'grab' : 'help' }}>
+                    <span style={{ width: 6, height: 6, borderRadius: 1, flexShrink: 0, border: `1px solid ${c.color}`, backgroundColor: onChart ? c.color : 'transparent' }} />
+                    <span style={{ fontFamily: MONO, fontSize: 8, color: isOn ? LIVE_WHITE : NO_DATA_GRAY, fontStyle: c.plottable ? 'normal' : 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.label}</span>
+                    {c.unit && <span style={{ fontFamily: MONO, fontSize: 7, color: '#898989', marginLeft: 'auto', flexShrink: 0 }}>{unitOf(c.id, c.unit)}</span>}
+                  </div>
+                )
+              })}
+            </div>
+          )
+        })}
       </div>
-      <div className="px-2 py-1 border-t border-[#1e1e1e]" style={{ fontFamily: MONO, fontSize: 7, color: '#333', lineHeight: 1.5 }}>
+      <div className="px-2 py-1 border-t border-[#1e1e1e]" style={{ fontFamily: MONO, fontSize: 7, color: '#898989', lineHeight: 1.5 }}>
+        <span style={{ color: LIVE_WHITE }}>WHITE</span> = RECEIVING DATA · <span style={{ color: NO_DATA_GRAY }}>GRAY</span> = NONE<br />
+        FILLED SWATCH = ON A CHART · <i>ITALIC</i> = BYTES ONLY<br />
+        DRAG A TRACE HERE TO REMOVE IT<br />
         DRAG ONTO A CHART TO OVERLAY · ONTO AN EDGE FOR A NEW CHART
       </div>
     </div>
@@ -101,7 +195,8 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
   onToggleHidden: (index: number) => void
   onDragState: (on: boolean) => void
 }) {
-  const { dropChannel, dropTrace } = useConfig()
+  const { dropChannel, dropTrace, unitPrefs } = useConfig()
+  const { baselines } = useZeroing()
   const [highlight, setHighlight] = useState<number | null>(null)
   const [yWin, setYWin] = useState<YWindow>(FULL_Y)
   const [zone, setZone] = useState<Zone | null>(null)
@@ -133,13 +228,17 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
   const zoomedY = yWin.lo !== 0 || yWin.hi !== 1
 
   const traces = chart.traces.map((trace, index) => {
-    const { def } = resolveChannel(trace.channel, sample, math)
-    const get = (f: Frame) => resolveChannel(trace.channel, f, math).value
-    const span = trace.max - trace.min || 1
-    const lo = trace.min + yWin.lo * span
-    const hi = trace.min + yWin.hi * span
+    // Data, trace range, and warn/danger levels are stored in the base unit; plot in the chosen one.
+    const { def, conv } = resolveChannelDisplay(trace.channel, sample, math, unitPrefs, baselines)
+    const get = channelDisplayGetter(trace.channel, math, conv, baselines)
+    const tMin = convertValue(trace.min, conv)
+    const span = convertValue(trace.max, conv) - tMin || 1
+    const lo = tMin + yWin.lo * span
+    const hi = tMin + yWin.hi * span
+    const warnAt = convertLevel(trace.warnAt, conv)
+    const dangerAt = convertLevel(trace.dangerAt, conv)
     const toY = (v: number) => clamp(H - ((v - lo) / (hi - lo || 1)) * H, -2, H + 2)
-    return { trace, index, def, get, toY, lo, hi }
+    return { trace, index, def, get, toY, lo, hi, warnAt, dangerAt }
   })
   const visible = traces.filter(t => !t.trace.hidden)
   const highlighted = highlight !== null && visible.some(t => t.index === highlight) ? highlight : null
@@ -161,13 +260,13 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
       onDrop={e => { const z = zoneOf(e); setZone(null); onDragState(false); performDrop(e, target(z), dropChannel, dropTrace) }}>
       <div className="panel-drag flex items-center justify-between gap-2 px-2 border-b border-[#1c1c1c] bg-[#151515]" style={{ minHeight: 19, cursor: 'grab', touchAction: 'none' }}>
         <div className="flex items-center gap-2 flex-wrap" style={{ minWidth: 0 }}>
-          <span style={{ fontFamily: MONO, fontSize: 8, color: '#555', letterSpacing: '0.15em', flexShrink: 0 }} title="Drag the title bar to reorder charts">{chart.title}</span>
-          {traces.map(({ trace, index, def, get }) => {
+          <span style={{ fontFamily: MONO, fontSize: 8, color: '#989898', letterSpacing: '0.15em', flexShrink: 0 }} title="Drag the title bar to reorder charts">{chart.title}</span>
+          {traces.map(({ trace, index, def, get, warnAt, dangerAt }) => {
             const frame = inspection.frame
             const value = frame ? get(frame) : NaN
             let valueColor = trace.color
-            if (trace.dangerAt != null && value >= trace.dangerAt) valueColor = '#ff3333'
-            else if (trace.warnAt != null && value >= trace.warnAt) valueColor = '#ff8800'
+            if (dangerAt != null && value >= dangerAt) valueColor = '#ff3333'
+            else if (warnAt != null && value >= warnAt) valueColor = '#ff8800'
             const dim = trace.hidden || (highlighted !== null && highlighted !== index)
             return (
               <span key={index} className="flex items-center gap-1" style={{ opacity: trace.hidden ? 0.35 : dim ? 0.55 : 1 }}>
@@ -181,8 +280,8 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
                   {def.label}
                 </span>
                 <LegendWarnings channel={trace.channel} />
-                <span style={{ fontFamily: MONO, fontSize: highlighted === index ? 11 : 9, color: Number.isFinite(value) ? valueColor : '#444', fontWeight: 700 }}>
-                  {fmtNum(value, 1)}<span style={{ color: '#3a3a3a', fontSize: 7, marginLeft: 1 }}>{Number.isFinite(value) ? def.unit : 'N/A'}</span>
+                <span style={{ fontFamily: MONO, fontSize: highlighted === index ? 11 : 9, color: Number.isFinite(value) ? valueColor : '#919191', fontWeight: 700 }}>
+                  {fmtNum(value, 1)}<span style={{ color: '#8c8c8c', fontSize: 7, marginLeft: 1 }}>{Number.isFinite(value) ? def.unit : 'N/A'}</span>
                 </span>
               </span>
             )
@@ -205,11 +304,11 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
             return (
               <g key={v}>
                 <line x1={0} y1={y} x2={W} y2={y} stroke="#202020" strokeWidth="0.5" />
-                <text x={4} y={clamp(y - 2, 7, H - 2)} fontSize="6.5" fill={axis.trace.color} opacity="0.5" fontFamily="monospace">{v}</text>
+                <text x={4} y={clamp(y - 2, 7, H - 2)} fontSize="6.5" fill={axis.trace.color} opacity="0.8" fontFamily="monospace">{v}</text>
               </g>
             )
           })}
-          {axis && [axis.trace.warnAt, axis.trace.dangerAt].map((level, i) => level == null ? null : (
+          {axis && [axis.warnAt, axis.dangerAt].map((level, i) => level == null ? null : (
             <line key={i} x1={0} x2={W} y1={axis.toY(level)} y2={axis.toY(level)} stroke={i === 0 ? '#ff8800' : '#ff3333'} strokeWidth="0.6" strokeDasharray="6 4" opacity="0.5" />
           ))}
           {visible.map(({ trace, index, get, toY }) => {
@@ -243,7 +342,7 @@ function GroupChart({ chartId, position, chart, view, range, crossFrac, math, dr
           onPointerUp={() => { axisDrag.current = null }}
           onDoubleClick={e => { e.stopPropagation(); setYWin(FULL_Y) }} />
         {visible.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ fontFamily: MONO, fontSize: 8, color: '#333', letterSpacing: '0.2em' }}>
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ fontFamily: MONO, fontSize: 8, color: '#898989', letterSpacing: '0.2em' }}>
             {chart.traces.length === 0 ? 'EMPTY — DRAG A CHANNEL HERE' : 'ALL TRACES HIDDEN'}
           </div>
         )}
@@ -268,7 +367,8 @@ type Zoom = { kind: 'live'; span: number } | { kind: 'fixed'; xMin: number; xMax
 
 export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }: { telemetry: Telemetry; syncCrosshair: boolean; onInspectionChange?: (inspection: ChartInspection) => void }) {
   const cfg = useConfig()
-  const { chartOrder, chartCfg, math, openConfig, setChartOrder, timeRange, setTimeRange, updateTrace, dropChannel, dropTrace } = cfg
+  const { chartOrder, chartCfg, math, openConfig, setChartOrder, timeRange, setTimeRange, updateTrace, dropChannel, dropTrace, panelSizes, setPanelSizes } = cfg
+  const channelListWidth = panelSizes.channelList ?? 150
   const { history } = telemetry
   const [crossFrac, setCrossFrac] = useState<number | null>(null)
   const [customWindow, setCustomWindow] = useState('')
@@ -401,12 +501,22 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
 
   const newest = histLen ? history[histLen - 1].t : NaN
   const best = bestLap(laps)
+  // Option text must not change while the dropdown is open: a native <select> whose options
+  // re-render (e.g. a running lap time at 10 Hz) keeps re-opening its popup and cannot be dismissed.
+  // So the in-progress lap shows no running time, and options only change when a lap is added/finished.
+  const lapKey = laps.map(l => `${l.num}:${l.end ?? ''}`).join(',') + `|${best?.num ?? ''}`
+  const lapOptions = useMemo(() => [...laps].reverse().map(l => (
+    <option key={l.num} value={l.num}>
+      {l.end === null ? `LAP ${l.num} (in progress)` : `LAP ${l.num} · ${fmtDuration(lapLength(l, l.end))}${best?.num === l.num ? ' ★ best' : ''}`}
+    </option>
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  )), [lapKey])
   const setMode = (mode: RangeMode) => setTimeRange({ mode })
   const charted = new Set(chartOrder.flatMap(id => chartCfg[id]?.traces.map(t => t.channel) ?? []))
   const orderedIds = chartOrder.filter(id => chartCfg[id])
 
   const items: StackItem[] = orderedIds.map((id, position) => ({
-    id, title: chartCfg[id].title, weight: 1,
+    id, title: chartCfg[id].title, weight: panelSizes[`c.${id}`] ?? 1,
     node: (
       <GroupChart chartId={id} position={position} chart={chartCfg[id]} view={view} range={range} crossFrac={crossFrac} math={math}
         dragging={dragging} onDragState={setDragging}
@@ -426,11 +536,15 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
   return (
     <div className="flex h-full">
       {showChannels
-        ? <ChannelList onClose={() => setShowChannels(false)} charted={charted} onDragState={setDragging} />
+        ? <>
+            <ChannelList telemetry={telemetry} width={channelListWidth} onClose={() => setShowChannels(false)} charted={charted} onDragState={setDragging} />
+            <ResizePx axis="x" label="Resize channel list" current={() => channelListWidth} min={100} max={420}
+              onChange={px => setPanelSizes({ channelList: px })} />
+          </>
         : (
           <button onClick={() => setShowChannels(true)} title="Show channel list"
             className="flex items-center justify-center border-r border-[#242424] bg-[#111]" style={{ width: 14, cursor: 'pointer' }}>
-            <span style={{ fontFamily: MONO, fontSize: 7, writingMode: 'vertical-lr', letterSpacing: '0.2em', color: '#3a3a3a' }}>› CHANNELS</span>
+            <span style={{ fontFamily: MONO, fontSize: 7, writingMode: 'vertical-lr', letterSpacing: '0.2em', color: '#8c8c8c' }}>› CHANNELS</span>
           </button>
         )}
 
@@ -464,11 +578,7 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
               <select value={String(timeRange.lap)} style={inputStyle}
                 onChange={e => setTimeRange({ lap: e.target.value === 'current' ? 'current' : Number(e.target.value) })}>
                 <option value="current">CURRENT LAP</option>
-                {[...laps].reverse().map(l => (
-                  <option key={l.num} value={l.num}>
-                    LAP {l.num} · {fmtDuration(lapLength(l, newest))}{l.end === null ? ' (in progress)' : best?.num === l.num ? ' ★ best' : ''}
-                  </option>
-                ))}
+                {lapOptions}
               </select>
               <button style={btn(timeRange.ghostBest, '#c88bff')} onClick={() => setTimeRange({ ghostBest: !timeRange.ghostBest })} title="Overlay the fastest completed lap (dashed)">GHOST BEST</button>
               <button style={btn(timeRange.ghostPrev, '#c88bff')} onClick={() => setTimeRange({ ghostPrev: !timeRange.ghostPrev })} title="Overlay the lap before the shown lap (dotted)">GHOST PREV</button>
@@ -489,7 +599,7 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
             {zoomed && <button style={btn(true, '#ffaa00')} onClick={() => setZoom(null)} title="Reset zoom (0, or double-click a chart)">FIT</button>}
             {paused && <button style={btn(true, '#00ff41')} onClick={() => commit({ xMin: bounds.xMax - span, xMax: bounds.xMax })} title="Jump to the newest data and follow it">● LIVE</button>}
           </div>
-          <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.15em' }}>
+          <span style={{ fontFamily: MONO, fontSize: 8, color: '#8c8c8c', letterSpacing: '0.15em' }}>
             {zoomed ? `ZOOM ${fmtDuration(span)}${paused ? ' · PAUSED' : ''}` : view.caption}
             {crossTime !== null && histLen ? ` · @ ${axisLabel(crossTime)}` : ''}
             {telemetry.historyTruncated && timeRange.mode === 'session' ? ' · OLDEST DATA TRIMMED' : ''}
@@ -503,9 +613,10 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
           onPointerLeave={() => { if (!dragRef.current) setCrossFrac(null) }}
           onDoubleClick={e => { if ((e.target as HTMLElement).closest('[data-chart-body]')) setZoom(null) }}>
           {items.length > 0
-            ? <DraggableStack items={items} onReorder={setChartOrder} />
+            ? <DraggableStack items={items} onReorder={setChartOrder} minPx={60}
+                onWeights={patch => setPanelSizes(Object.fromEntries(Object.entries(patch).map(([id, w]) => [`c.${id}`, w])))} />
             : (
-              <div className="flex flex-1 items-center justify-center" style={{ fontFamily: MONO, fontSize: 9, color: '#444' }}
+              <div className="flex flex-1 items-center justify-center" style={{ fontFamily: MONO, fontSize: 9, color: '#919191' }}
                 onDragOver={e => { if (isOurDrag(e)) e.preventDefault() }}
                 onDrop={e => { setDragging(false); performDrop(e, { kind: 'new', index: 0 }, dropChannel, dropTrace) }}>
                 NO CHARTS — DRAG A CHANNEL HERE
@@ -516,7 +627,7 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
           )}
           {view.emptyReason && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span style={{ fontFamily: MONO, fontSize: 9, color: '#666', backgroundColor: '#111111dd', padding: '6px 10px', borderRadius: 4, letterSpacing: '0.15em' }}>{view.emptyReason}</span>
+              <span style={{ fontFamily: MONO, fontSize: 9, color: '#9f9f9f', backgroundColor: '#111111dd', padding: '6px 10px', borderRadius: 4, letterSpacing: '0.15em' }}>{view.emptyReason}</span>
             </div>
           )}
         </div>
@@ -527,14 +638,14 @@ export function TimeSeriesPanel({ telemetry, syncCrosshair, onInspectionChange }
             onDragOver={e => { if (!isOurDrag(e)) return; e.preventDefault(); setFooterHot(true) }}
             onDragLeave={() => setFooterHot(false)}
             onDrop={e => { setFooterHot(false); setDragging(false); performDrop(e, { kind: 'new', index: orderedIds.length }, dropChannel, dropTrace) }}>
-            <span style={{ fontFamily: MONO, fontSize: 8, color: footerHot ? '#00ff41' : '#444', letterSpacing: '0.2em' }}>DROP HERE FOR A NEW CHART AT THE BOTTOM</span>
+            <span style={{ fontFamily: MONO, fontSize: 8, color: footerHot ? '#00ff41' : '#919191', letterSpacing: '0.2em' }}>DROP HERE FOR A NEW CHART AT THE BOTTOM</span>
           </div>
         )}
 
         {/* X axis */}
         <div className="flex items-center justify-between px-2 border-t border-[#1c1c1c] bg-[#111111]" style={{ height: 14 }}>
           {[0, 0.25, 0.5, 0.75, 1].map(p => (
-            <span key={p} style={{ fontFamily: MONO, fontSize: 7, color: '#333' }}>{histLen ? axisLabel(range.xMin + p * span) : ''}</span>
+            <span key={p} style={{ fontFamily: MONO, fontSize: 7, color: '#898989' }}>{histLen ? axisLabel(range.xMin + p * span) : ''}</span>
           ))}
         </div>
       </div>

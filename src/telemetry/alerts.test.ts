@@ -59,3 +59,17 @@ describe('telemetry warnings', () => {
     expect(alertDuration(-1)).toBe('00:00')
   })
 })
+
+describe('warning dock ordering', () => {
+  const ev = (id: string, severity: 'warn' | 'danger', startedAt: number, extra: Partial<import('./alerts').AlertEvent> = {}): import('./alerts').AlertEvent =>
+    ({ id, severity, message: id, channels: [], startedAt, sessionTime: 0, ...extra })
+
+  it('orders live before cleared, critical before warning, newest first, and drops dismissed', async () => {
+    const { orderAlertEvents } = await import('./alerts')
+    const ordered = orderAlertEvents([
+      ev('old-warn', 'warn', 1), ev('new-warn', 'warn', 5), ev('crit', 'danger', 3),
+      ev('cleared-crit', 'danger', 9, { clearedAt: 10 }), ev('hidden', 'danger', 8, { dismissed: true }),
+    ])
+    expect(ordered.map(e => e.id)).toEqual(['crit', 'new-warn', 'old-warn', 'cleared-crit'])
+  })
+})

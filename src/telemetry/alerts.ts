@@ -60,3 +60,14 @@ export function alertDuration(milliseconds: number): string {
   const seconds = Math.max(0, Math.floor(milliseconds / 1000))
   return `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${(seconds % 60).toString().padStart(2, '0')}`
 }
+
+/**
+ * Events worth showing, worst first: live before cleared, critical before warning, newest first.
+ * Dismissed events are excluded.
+ */
+export function orderAlertEvents(events: AlertEvent[]): AlertEvent[] {
+  return events.filter(event => !event.dismissed).sort((a, b) =>
+    Number(a.clearedAt != null) - Number(b.clearedAt != null) ||
+    Number(b.severity === 'danger') - Number(a.severity === 'danger') || b.startedAt - a.startedAt)
+}
+

@@ -31,12 +31,14 @@ type Tok = { type: 'num'; v: number } | { type: 'id'; v: string } | { type: 'op'
 
 function tokenize(src: string): Tok[] {
   const toks: Tok[] = []
-  const re = /\s*(\d*\.?\d+|[A-Za-z_]\w*|<=|>=|==|!=|&&|\|\||[-+*/%<>()])/g
+  // 'quoted names' allow channels that are not identifiers, like MoTeC's 'Channel Name' syntax: '%_TPS', 'n-Gear'.
+  const re = /\s*('[^']+'|\d*\.?\d+|[A-Za-z_]\w*|<=|>=|==|!=|&&|\|\||[-+*/%<>(),])/g
   let m: RegExpExecArray | null
   let prev: Tok | undefined
   while ((m = re.exec(src)) !== null) {
     const s = m[1]
-    if (/^\d|^\./.test(s)) toks.push(prev = { type: 'num', v: parseFloat(s) })
+    if (s.startsWith("'")) toks.push(prev = { type: 'id', v: s.slice(1, -1) })
+    else if (/^\d|^\./.test(s)) toks.push(prev = { type: 'num', v: parseFloat(s) })
     else if (/^[A-Za-z_]/.test(s)) {
       if (s in FUNCS) toks.push(prev = { type: 'func', v: s })
       else toks.push(prev = { type: 'id', v: s })
@@ -126,4 +128,9 @@ export function evalExpr(src: string, scope: Record<string, number>): number {
     }
   }
   return st.length ? st[st.length - 1] : NaN
+}
+
+/** Channel identifiers an expression refers to (function names and numbers excluded). */
+export function exprIdentifiers(src: string): string[] {
+  return [...new Set(tokenize(src).filter(t => t.type === 'id').map(t => (t as { v: string }).v))]
 }

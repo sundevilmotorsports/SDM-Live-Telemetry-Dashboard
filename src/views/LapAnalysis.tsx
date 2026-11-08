@@ -9,7 +9,7 @@ function Panel({ title, children, style }: { title: string; children: React.Reac
   return (
     <div className="flex flex-col bg-[#171717] border border-[#222] rounded overflow-hidden" style={style}>
       <div className="flex items-center px-3 border-b border-[#222] bg-[#111]" style={{ height: 22, flexShrink: 0 }}>
-        <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.25em' }}>{title}</span>
+        <span style={{ fontFamily: MONO, fontSize: 8, color: '#8c8c8c', letterSpacing: '0.25em' }}>{title}</span>
       </div>
       <div className="flex-1 overflow-auto">{children}</div>
     </div>
@@ -17,7 +17,7 @@ function Panel({ title, children, style }: { title: string; children: React.Reac
 }
 
 function LapTrend({ laps, bestLap }: { laps: Lap[]; bestLap: Lap | null }) {
-  if (laps.length < 2) return <div className="flex items-center justify-center h-full"><span style={{ fontFamily: MONO, fontSize: 9, color: '#333' }}>NEED 2+ LAPS</span></div>
+  if (laps.length < 2) return <div className="flex items-center justify-center h-full"><span style={{ fontFamily: MONO, fontSize: 9, color: '#898989' }}>NEED 2+ LAPS</span></div>
   const totals = laps.map(l => l.total)
   const min = Math.min(...totals), max = Math.max(...totals), span = max - min || 1
   const W = 600, H = 120, pad = 10
@@ -57,7 +57,7 @@ export function LapAnalysis({ laps, bestLap, bestSectors, theoretical, totalLaps
           ['LAPS DONE', `${laps.length} / ${totalLaps}`, '#888'],
         ] as [string, string, string][]).map(([label, val, color]) => (
           <div key={label} className="flex flex-col justify-center px-4 py-2 bg-[#141414] border border-[#222] rounded" style={{ flex: 1 }}>
-            <span style={{ fontFamily: MONO, fontSize: 8, color: '#3a3a3a', letterSpacing: '0.2em' }}>{label}</span>
+            <span style={{ fontFamily: MONO, fontSize: 8, color: '#8c8c8c', letterSpacing: '0.2em' }}>{label}</span>
             <span style={{ fontFamily: MONO, fontSize: 20, fontWeight: 700, color }}>{val}</span>
           </div>
         ))}
@@ -70,24 +70,24 @@ export function LapAnalysis({ laps, bestLap, bestSectors, theoretical, totalLaps
             <thead>
               <tr style={{ backgroundColor: '#131313' }}>
                 {['LAP', 'S1', 'S2', 'S3', 'TOTAL', 'Δ BEST', ...KPI.map(k => `AVG ${CHANNEL_MAP[k].label.toUpperCase().slice(0, 6)}`)].map((h, i) => (
-                  <th key={h} style={{ fontSize: 7.5, color: '#3a3a3a', letterSpacing: '0.1em', padding: '5px 8px', textAlign: i === 0 ? 'left' : 'right', borderBottom: '1px solid #222', position: 'sticky', top: 0, backgroundColor: '#131313' }}>{h}</th>
+                  <th key={h} style={{ fontSize: 7.5, color: '#8c8c8c', letterSpacing: '0.1em', padding: '5px 8px', textAlign: i === 0 ? 'left' : 'right', borderBottom: '1px solid #222', position: 'sticky', top: 0, backgroundColor: '#131313' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {reversed.length === 0 && <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', fontSize: 9, color: '#333' }}>NO COMPLETED LAPS YET…</td></tr>}
+              {reversed.length === 0 && <tr><td colSpan={10} style={{ padding: 20, textAlign: 'center', fontSize: 9, color: '#898989' }}>NO COMPLETED LAPS YET…</td></tr>}
               {reversed.map(l => {
                 const isBest = bestLap?.num === l.num
                 const delta = bestLap ? l.total - bestLap.total : 0
                 return (
                   <tr key={l.num} style={{ backgroundColor: isBest ? '#00ff4108' : 'transparent' }}>
-                    <td style={{ fontSize: 9, color: '#888', padding: '5px 8px', fontWeight: 700 }}>{l.num}</td>
+                    <td style={{ fontSize: 9, color: '#aeaeae', padding: '5px 8px', fontWeight: 700 }}>{l.num}</td>
                     {[l.s1, l.s2, l.s3].map((s, i) => (
-                      <td key={i} style={{ fontSize: 9, color: bestSectors[i] === s ? '#c88bff' : '#666', padding: '5px 8px', textAlign: 'right', fontWeight: bestSectors[i] === s ? 700 : 400 }}>{s.toFixed(3)}</td>
+                      <td key={i} style={{ fontSize: 9, color: bestSectors[i] === s ? '#c88bff' : '#9f9f9f', padding: '5px 8px', textAlign: 'right', fontWeight: bestSectors[i] === s ? 700 : 400 }}>{s.toFixed(3)}</td>
                     ))}
-                    <td style={{ fontSize: 9, color: isBest ? '#00ff41' : '#bbb', padding: '5px 8px', textAlign: 'right', fontWeight: 700 }}>{fmtTime(l.total)}</td>
+                    <td style={{ fontSize: 9, color: isBest ? '#00ff41' : '#c5c5c5', padding: '5px 8px', textAlign: 'right', fontWeight: 700 }}>{fmtTime(l.total)}</td>
                     <td style={{ fontSize: 9, color: isBest ? '#00ff41' : delta <= 0 ? '#00ff41' : '#ff6644', padding: '5px 8px', textAlign: 'right' }}>{isBest ? 'BEST' : fmtDelta(delta)}</td>
-                    {KPI.map(k => <td key={k} style={{ fontSize: 9, color: '#555', padding: '5px 8px', textAlign: 'right' }}>{l.avg[k]?.toFixed(k === 'rpm' ? 0 : 1)}</td>)}
+                    {KPI.map(k => <td key={k} style={{ fontSize: 9, color: '#989898', padding: '5px 8px', textAlign: 'right' }}>{l.avg[k]?.toFixed(k === 'rpm' ? 0 : 1)}</td>)}
                   </tr>
                 )
               })}
@@ -95,7 +95,7 @@ export function LapAnalysis({ laps, bestLap, bestSectors, theoretical, totalLaps
           </table>
           {math.length > 0 && reversed.length > 0 && (
             <div className="px-3 py-2 border-t border-[#222]">
-              <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#3a3a3a', letterSpacing: '0.2em' }}>MATH CHANNELS — last lap avg not tracked per-lap; live values shown on gauges.</span>
+              <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#8c8c8c', letterSpacing: '0.2em' }}>MATH CHANNELS — last lap avg not tracked per-lap; live values shown on gauges.</span>
             </div>
           )}
         </Panel>
@@ -111,17 +111,17 @@ export function LapAnalysis({ laps, bestLap, bestSectors, theoretical, totalLaps
               <thead>
                 <tr style={{ backgroundColor: '#131313' }}>
                   {['P', 'CAR', 'TEAM', 'LAST', 'BEST', 'GAP'].map((h, i) => (
-                    <th key={h} style={{ fontSize: 7.5, color: '#3a3a3a', padding: '5px 6px', textAlign: i < 3 ? 'left' : 'right', borderBottom: '1px solid #222' }}>{h}</th>
+                    <th key={h} style={{ fontSize: 7.5, color: '#8c8c8c', padding: '5px 6px', textAlign: i < 3 ? 'left' : 'right', borderBottom: '1px solid #222' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {competitors.map((c, i) => (
                   <tr key={c.car} style={{ backgroundColor: c.isOurs ? '#4488ff14' : 'transparent' }}>
-                    <td style={{ fontSize: 9, color: i === 0 ? '#ffdd00' : '#666', padding: '4px 6px', fontWeight: 700 }}>{i + 1}</td>
-                    <td style={{ fontSize: 9, color: c.isOurs ? '#4488ff' : '#999', padding: '4px 6px', fontWeight: 700 }}>#{c.car}</td>
-                    <td style={{ fontSize: 8, color: c.isOurs ? '#4488ff' : '#555', padding: '4px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{c.team}</td>
-                    <td style={{ fontSize: 8.5, color: '#888', padding: '4px 6px', textAlign: 'right' }}>{fmtTime(c.lastLap)}</td>
+                    <td style={{ fontSize: 9, color: i === 0 ? '#ffdd00' : '#9f9f9f', padding: '4px 6px', fontWeight: 700 }}>{i + 1}</td>
+                    <td style={{ fontSize: 9, color: c.isOurs ? '#4488ff' : '#b6b6b6', padding: '4px 6px', fontWeight: 700 }}>#{c.car}</td>
+                    <td style={{ fontSize: 8, color: c.isOurs ? '#4488ff' : '#989898', padding: '4px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 90 }}>{c.team}</td>
+                    <td style={{ fontSize: 8.5, color: '#aeaeae', padding: '4px 6px', textAlign: 'right' }}>{fmtTime(c.lastLap)}</td>
                     <td style={{ fontSize: 8.5, color: '#00ff41', padding: '4px 6px', textAlign: 'right' }}>{fmtTime(c.bestLap)}</td>
                     <td style={{ fontSize: 8.5, color: i === 0 ? '#ffdd00' : '#ff6644', padding: '4px 6px', textAlign: 'right' }}>{i === 0 ? 'LEADER' : `+${c.gap.toFixed(1)}`}</td>
                   </tr>

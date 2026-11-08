@@ -11,8 +11,8 @@ export default function FuelTank({ inspection }: { inspection: ChartInspection |
 
   return <div className="flex flex-col h-full min-w-0 bg-[#171717] border-t border-l border-[#222]">
     <div className="panel-drag flex items-center justify-between gap-2 px-3 border-b border-[#222] bg-[#111]" style={{ minHeight: 20, cursor: 'grab', touchAction: 'none' }}>
-      <span style={{ fontFamily: MONO, fontSize: 8, color: '#777', letterSpacing: '0.15em' }}>FUEL TANK</span>
-      <span title="Follows the trace cursor, or the right edge of the visible time range" style={{ fontFamily: MONO, fontSize: 7, color: '#999' }}>TIME LINKED</span>
+      <span style={{ fontFamily: MONO, fontSize: 8, color: '#a7a7a7', letterSpacing: '0.15em' }}>FUEL TANK</span>
+      <span title="Follows the trace cursor, or the right edge of the visible time range" style={{ fontFamily: MONO, fontSize: 7, color: '#b6b6b6' }}>TIME LINKED</span>
     </div>
     <div className="flex flex-1 min-h-0 items-center justify-center gap-3 px-3 py-2" style={{ fontFamily: MONO }}>
       <svg viewBox="0 0 90 120" role="img" aria-label={available ? `Fuel tank ${fuel.toFixed(1)} percent full` : 'Fuel level unavailable at the selected time'} className="h-full" style={{ maxHeight: 150, maxWidth: '40%', minHeight: 0 }}>
@@ -28,9 +28,9 @@ export default function FuelTank({ inspection }: { inspection: ChartInspection |
       </svg>
       <div className="min-w-0" style={{ fontVariantNumeric: 'tabular-nums' }}>
         <div style={{ fontSize: 23, fontWeight: 700, color }}>{available ? `${fuel.toFixed(1)}%` : '—'}</div>
-        <div className="mt-1" style={{ fontSize: 7, color: '#999', letterSpacing: '0.06em' }}>{available ? 'FUEL REMAINING' : 'FUEL UNAVAILABLE'}</div>
-        <div className="mt-2" style={{ fontSize: 8, color: '#bbb' }}>{inspection?.frame ? `SESSION ${fmtDuration(inspection.frame.t)}` : 'NO SELECTED SAMPLE'}</div>
-        <div className="mt-1" style={{ fontSize: 7, color: '#777' }}>{inspection ? `${inspection.mode === 'cursor' ? 'CURSOR' : 'VIEW END'} · ${inspection.label}` : 'WAITING FOR TRACES'}</div>
+        <div className="mt-1" style={{ fontSize: 7, color: '#b6b6b6', letterSpacing: '0.06em' }}>{available ? 'FUEL REMAINING' : 'FUEL UNAVAILABLE'}</div>
+        <div className="mt-2" style={{ fontSize: 8, color: '#c5c5c5' }}>{inspection?.frame ? `SESSION ${fmtDuration(inspection.frame.t)}` : 'NO SELECTED SAMPLE'}</div>
+        <div className="mt-1" style={{ fontSize: 7, color: '#a7a7a7' }}>{inspection ? `${inspection.mode === 'cursor' ? 'CURSOR' : 'VIEW END'} · ${inspection.label}` : 'WAITING FOR TRACES'}</div>
       </div>
     </div>
   </div>

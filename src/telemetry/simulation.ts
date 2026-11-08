@@ -1,4 +1,5 @@
 import { wheelReferenceSpeed, WHEEL_REFERENCE_DESCRIPTION } from './wheelSpeed'
+import { LOGGER_CHANNELS, LOGGER_INDEX } from './raw/loggerChannels'
 
 // ── Telemetry simulation: frames, channels, track geometry ──────────────────
 
@@ -25,6 +26,8 @@ export interface Frame {
   lapTime: number
   lapNum: number
   suspFL: number; suspFR: number; suspRL: number; suspRR: number
+  /** Raw CAN only: every logger channel's held value, slot = LOGGER_INDEX[name]; NaN = none yet. */
+  raw?: Float64Array
 }
 
 export function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
@@ -78,6 +81,8 @@ export interface ChannelDef {
   color: string
   get: (f: Frame) => number
   description?: string
+  /** Channel-list group (MoTeC-style). Dashboard channels have none. */
+  group?: string
 }
 
 export const CHANNELS: ChannelDef[] = [
@@ -102,7 +107,29 @@ export const CHANNELS: ChannelDef[] = [
   { id: 'suspFL', label: 'Susp Vel FL', unit: 'mm/s', min: -400, max: 400, color: '#00ffff', get: f => f.suspFL },
 ]
 
-export const CHANNEL_MAP: Record<string, ChannelDef> = Object.fromEntries(CHANNELS.map(c => [c.id, c]))
+const LOGGER_PALETTE = ['#7fd4ff', '#ffb366', '#8cff8c', '#ff8c8c', '#ffff8c', '#c8a2ff', '#66ffd9', '#ff99cc']
+
+/**
+ * Every logger channel that is not already shown by a dashboard field, as a chartable
+ * channel `raw:<name>` (MoTeC-style: every logged channel can go on any chart or gauge).
+ * Opaque byte arrays cannot be plotted and are listed separately (see LOGGER_CHANNELS).
+ */
+export const LOGGER_CHANNEL_DEFS: ChannelDef[] = LOGGER_CHANNELS
+  .filter(c => !c.mappedField && c.kind !== 'opaque')
+  .map((c, i) => {
+    const slot = LOGGER_INDEX[c.name]
+    return {
+    id: c.id, label: c.name, unit: c.unit, min: c.min, max: c.max, group: c.group,
+    color: LOGGER_PALETTE[i % LOGGER_PALETTE.length],
+    description: c.note ? `${c.source}. ${c.note}` : c.source,
+    get: (f: Frame) => (f.raw ? f.raw[slot] : NaN),
+  }
+  })
+
+/** Dashboard channels followed by every logger channel. CHANNELS stays the fixed dashboard set. */
+export const ALL_CHANNELS: ChannelDef[] = [...CHANNELS, ...LOGGER_CHANNEL_DEFS]
+
+export const CHANNEL_MAP: Record<string, ChannelDef> = Object.fromEntries(ALL_CHANNELS.map(c => [c.id, c]))
 
 // ── Time-series chart base definitions (left column) ─────────────────────────
 export interface ChartExtra { channel: string; color: string }
@@ -133,6 +160,13 @@ export const CHART_BASE_MAP: Record<string, ChartBase> = Object.fromEntries(CHAR
 export function frameScope(f: Frame): Record<string, number> {
   const s: Record<string, number> = {}
   for (const c of CHANNELS) s[c.id] = c.get(f)
+  // Logger channels by their own names (quote names that are not identifiers: '%_TPS').
+  if (f.raw) {
+    for (let i = 0; i < LOGGER_CHANNELS.length; i++) {
+      const name = LOGGER_CHANNELS[i].name
+      if (Number.isFinite(f.raw[i]) && !(name in s)) s[name] = f.raw[i]
+    }
+  }
   return s
 }
 

@@ -10,7 +10,7 @@ export default function SteeringPanel({ frames }: { frames: Frame[] }) {
   return (
     <div className="flex flex-col h-full bg-[#171717] border-t border-[#222]">
       <div className="panel-drag flex items-center gap-2 px-3 border-b border-[#222] bg-[#111]" style={{ minHeight: 20, cursor: 'grab', touchAction: 'none' }}>
-        <span style={{ fontFamily: MONO, fontSize: 8, color: '#777', letterSpacing: '0.2em' }}>STEERING ANGLE</span>
+        <span style={{ fontFamily: MONO, fontSize: 8, color: '#a7a7a7', letterSpacing: '0.2em' }}>STEERING ANGLE</span>
         <LegendWarnings channel="steering" />
       </div>
       <div className="flex flex-1 min-h-0 items-center justify-center gap-6 px-4 py-2">
@@ -27,7 +27,7 @@ export default function SteeringPanel({ frames }: { frames: Frame[] }) {
         </svg>
         <div style={{ fontFamily: MONO, fontVariantNumeric: 'tabular-nums' }}>
           <div style={{ fontSize: 26, fontWeight: 700, color, lineHeight: 1.2 }}>{readout}</div>
-          <div className="mt-2" style={{ fontSize: 8, color: '#777', letterSpacing: '0.12em' }}>{available ? 'STEERING ANGLE' : 'NO STEERING DATA'}</div>
+          <div className="mt-2" style={{ fontSize: 8, color: '#a7a7a7', letterSpacing: '0.12em' }}>{available ? 'STEERING ANGLE' : 'NO STEERING DATA'}</div>
         </div>
       </div>
     </div>
