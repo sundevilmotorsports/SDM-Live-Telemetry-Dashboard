@@ -20,7 +20,7 @@ export function createSupabaseBatchClient(url: string, key: string, sessionId: s
           .schema(CAN_BATCH_SCHEMA)
           .from(CAN_BATCH_TABLE)
           // Casting on the server is essential: int8 JSON numbers can silently round.
-          .select('id::text,session_id,device_id,seq,dropped_frames,frames,received_at')
+          .select('id::text,session_id,device_id,seq,dropped_frames,frames,sent_at')
           .eq('session_id', sessionId)
           // Oldest first from the session start, then catch up after the cursor.
           .order('id', { ascending: true })

@@ -67,7 +67,7 @@ interface Batch {
   seq: number
   droppedFrames: number
   frames: unknown[]
-  receivedAtMs: number
+  sentAtMs: number
 }
 
 const NO_ROWS_WARNING = 'No rows visible for this session. Check that you are signed in and the session ID is right: RLS returns an empty list (not an error) to unauthenticated readers, as can a session with no batches yet.'
@@ -97,11 +97,11 @@ function parseBatch(raw: unknown, sessionId: string): Batch {
   if (!Array.isArray(row.frames) || row.frames.length > RAW_MAX_BATCH_FRAMES) {
     throw new Error(`Invalid raw batch: frames must be an array of at most ${RAW_MAX_BATCH_FRAMES} frames`)
   }
-  // Null is legal in the table, but cannot establish safe historical freshness.
-  if (typeof row.received_at !== 'string' || !Number.isFinite(Date.parse(row.received_at))) {
-    throw new Error('Invalid raw batch: received_at must be a valid timestamp string')
+  // A timestamp is required to establish safe historical freshness.
+  if (typeof row.sent_at !== 'string' || !Number.isFinite(Date.parse(row.sent_at))) {
+    throw new Error('Invalid raw batch: sent_at must be a valid timestamp string')
   }
-  return { id, seq: row.seq, droppedFrames: row.dropped_frames, frames: row.frames, receivedAtMs: Date.parse(row.received_at) }
+  return { id, seq: row.seq, droppedFrames: row.dropped_frames, frames: row.frames, sentAtMs: Date.parse(row.sent_at) }
 }
 
 function orderedFrames(frames: unknown[]): unknown[] {
@@ -284,7 +284,7 @@ export class RawBatchSession {
     this.diagnostics.unknownFrames += decoded.unknown ? 1 : 0
     this.diagnostics.skippedSignals += decoded.skippedSignals
     const tUs = decoded.timestampMs * 1_000
-    const receivedAtMs = Math.min(now, batch.receivedAtMs)
+    const receivedAtMs = Math.min(now, batch.sentAtMs)
     // A newer opaque value also owns this channel's timestamp, even if it was
     // too wide to enter numeric state. Do not refresh it with an older number.
     const values = Object.fromEntries(Object.entries(decoded.values).filter(([id]) => {
@@ -296,8 +296,8 @@ export class RawBatchSession {
     const previousChannels = this.channels
     const merged = mergeChannels(previousChannels, {
       seq: batch.seq,
-      // No device send time is available. This helper only consumes values/tUs.
-      sendTimestampMs: 0,
+      // The merge helper consumes values/tUs; diagnostics below use the send time.
+      sendTimestampMs: batch.sentAtMs,
       tUs,
       values,
       rejectedValueCount: decoded.skippedSignals,
@@ -328,7 +328,9 @@ export class RawBatchSession {
     this.diagnostics.accepted++
     this.diagnostics.lastAcceptedMs = Math.max(this.diagnostics.lastAcceptedMs ?? receivedAtMs, receivedAtMs)
     this.diagnostics.latestSampleUs = Math.max(this.diagnostics.latestSampleUs ?? 0, tUs)
-    // Estimate only: device and local clocks may be skewed. Never call it latency.
+    // Estimates include clock skew; upload delay also includes polling, not just network time.
+    this.diagnostics.lastSendTimestampMs = batch.sentAtMs
+    this.diagnostics.uplinkEstimateMs = now - batch.sentAtMs
     this.diagnostics.sampleAgeEstimateMs = now - decoded.timestampMs
     if (!this.active(generation)) return
     this.options.onSample?.({ channels: this.channels, sessionStartUs: this.sessionStartUs, latestSampleUs: this.diagnostics.latestSampleUs })

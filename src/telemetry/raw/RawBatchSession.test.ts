@@ -28,7 +28,7 @@ function batch(id: string | number = '1', overrides: Record<string, unknown> = {
     seq: 10,
     dropped_frames: 0,
     frames: [{ ...REAL_FRAME }],
-    received_at: new Date(NOW).toISOString(),
+    sent_at: new Date(NOW).toISOString(),
     ...overrides,
   }
 }
@@ -87,7 +87,7 @@ describe('RawBatchSession', () => {
     expect(fetchPage.mock.calls[1][0].afterId).toBe('2')
     expect(session.snapshot().diagnostics).toMatchObject({
       receivedBatches: 3, received: 3, decodedFrames: 3, accepted: 3, lastSeq: 0, lastBatchId: '3',
-      latestSampleUs: (SAMPLE_MS + 2) * 1_000, lastSendTimestampMs: null, uplinkEstimateMs: null,
+      latestSampleUs: (SAMPLE_MS + 2) * 1_000, lastSendTimestampMs: NOW, uplinkEstimateMs: 0,
     })
     expect(session.snapshot().sessionStartUs).toBe(SAMPLE_MS * 1_000)
     expect(listener.mock.calls[listener.mock.calls.length - 1][0].status).toBe('connected')
@@ -286,19 +286,36 @@ describe('RawBatchSession', () => {
     expect(session.snapshot().diagnostics.lastError).toBeNull()
   })
 
-  it('does not make historical bootstrap data fresh and caps future server receipts at local now', async () => {
+  it('does not make historical bootstrap data fresh and caps future device send times at local now', async () => {
     const historicalReceipt = NOW - 86_400_000
-    const { session } = setup([[batch(1, { received_at: new Date(historicalReceipt).toISOString() })], [
-      batch(2, { received_at: new Date(NOW + 99_000).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 1 }] }),
+    const { session } = setup([[batch(1, { sent_at: new Date(historicalReceipt).toISOString() })], [
+      batch(2, { sent_at: new Date(NOW + 99_000).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 1 }] }),
     ]])
     session.start()
     await settle()
     expect(session.snapshot().diagnostics.lastAcceptedMs).toBe(historicalReceipt)
     expect(session.snapshot().channels.rate_lpm_1.receivedAtMs).toBe(historicalReceipt)
     expect(sessionFreshness(session.snapshot().channels, NOW, 3_500)).toBe('stale')
-    expect(session.snapshot().diagnostics).toMatchObject({ lastReceiptMs: NOW, sampleAgeEstimateMs: 10_000, uplinkEstimateMs: null, lastSendTimestampMs: null })
+    expect(session.snapshot().diagnostics).toMatchObject({ lastReceiptMs: NOW, sampleAgeEstimateMs: 10_000, uplinkEstimateMs: 86_400_000, lastSendTimestampMs: historicalReceipt })
     await vi.advanceTimersByTimeAsync(1_000)
     expect(session.snapshot().diagnostics.lastAcceptedMs).toBe(NOW)
+    expect(session.snapshot().channels.rate_lpm_1.receivedAtMs).toBe(NOW)
+  })
+
+  it('measures upload-to-client delay from sent_at, not the frame capture time', async () => {
+    const { session } = setup([[batch(1, { sent_at: new Date(NOW - 250).toISOString() })]])
+    session.start()
+    await settle()
+    expect(session.snapshot().diagnostics).toMatchObject({
+      lastSendTimestampMs: NOW - 250, uplinkEstimateMs: 250, sampleAgeEstimateMs: 10_000,
+    })
+  })
+
+  it('preserves a negative delay estimate to expose device clock skew', async () => {
+    const { session } = setup([[batch(1, { sent_at: new Date(NOW + 250).toISOString() })]])
+    session.start()
+    await settle()
+    expect(session.snapshot().diagnostics.uplinkEstimateMs).toBe(-250)
     expect(session.snapshot().channels.rate_lpm_1.receivedAtMs).toBe(NOW)
   })
 
@@ -366,7 +383,7 @@ describe('RawBatchSession', () => {
     const opaque = { ...REAL_FRAME, can_id: 881, data: 'FFffFFffFFffFFff' }
     const onAccepted = vi.fn()
     let now = NOW
-    const { session } = setup([[batch(1, { frames: [opaque] })], [batch(2, { received_at: new Date(NOW + 10_000).toISOString(), frames: [
+    const { session } = setup([[batch(1, { frames: [opaque] })], [batch(2, { sent_at: new Date(NOW + 10_000).toISOString(), frames: [
       { ...opaque, data: '0000000000000000', ts_ms: SAMPLE_MS - 1 },
       opaque,
     ] })]], { onAccepted, now: () => now })
@@ -478,13 +495,13 @@ describe('RawBatchSession', () => {
     expect(session.snapshot().rawReadings[0].tUs).toBe(opaque.ts_ms * 1_000)
   })
 
-  it('never regresses lastAcceptedMs on a newer primary id with an older server receipt', async () => {
+  it('never regresses lastAcceptedMs on a newer primary id with an older device send time', async () => {
     let now = NOW
     const { session } = setup([
-      [batch(1, { received_at: new Date(NOW - 100).toISOString() })],
-      [batch(2, { received_at: new Date(NOW - 10_000).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 1 }] })],
-      [batch(3, { received_at: new Date(NOW + 100_000).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 2 }] })],
-      [batch(4, { received_at: new Date(NOW - 500).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 3 }] })],
+      [batch(1, { sent_at: new Date(NOW - 100).toISOString() })],
+      [batch(2, { sent_at: new Date(NOW - 10_000).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 1 }] })],
+      [batch(3, { sent_at: new Date(NOW + 100_000).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 2 }] })],
+      [batch(4, { sent_at: new Date(NOW - 500).toISOString(), frames: [{ ...REAL_FRAME, ts_ms: SAMPLE_MS + 3 }] })],
     ], { now: () => now })
     session.start()
     await settle()
@@ -559,8 +576,8 @@ describe('RawBatchSession', () => {
     ['missing dropped count', { dropped_frames: undefined }],
     ['non-array frames', { frames: {} }],
     ['unbounded frames', { frames: Array(RAW_MAX_BATCH_FRAMES + 1).fill(null) }],
-    ['null receipt', { received_at: null }],
-    ['invalid receipt', { received_at: 'not-a-time' }],
+    ['null send time', { sent_at: null }],
+    ['invalid send time', { sent_at: 'not-a-time' }],
   ])('rejects %s without cursor advancement', async (_name, overrides) => {
     const { session, fetchPage } = setup([[batch(1), batch(2, overrides)]])
     session.start()
