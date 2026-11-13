@@ -211,6 +211,7 @@ function Dashboard() {
         source={telemetry.source}
         supabaseMode={cfg.supabaseMode}
         freshness={telemetry.freshness}
+        displayedSampleMs={telemetry.displayedSampleMs}
 
         onOpenConfig={() => cfg.openConfig({ kind: 'source' })}
       />

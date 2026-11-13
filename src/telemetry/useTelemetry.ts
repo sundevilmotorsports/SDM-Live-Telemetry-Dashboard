@@ -55,6 +55,8 @@ export interface Telemetry {
   channelReadings: { id: string; value: number; tUs: number; receivedAtMs: number }[]
   /** Per source channel: latest value, measured sample rate, and whether it is currently receiving data. */
   channelStats: ChannelStat[]
+  /** Estimated Unix timestamp of the displayed frame; includes raw playout delay, not clock skew correction. */
+  displayedSampleMs?: number | null
   /** Whole-session 10 Hz history for the time series (same clock as Frame.t). */
   history: Frame[]
   /** True if the oldest part of a long session was dropped to stay within memory. */
@@ -446,6 +448,10 @@ export function useTelemetry(): Telemetry {
     historyTruncated: historyRef.current.truncated,
     streamKey: telemetrySource === 'supabase' ? `supabase:${supabaseMode}:${telemetrySessionId}` : telemetrySource === 'websocket' ? `ws:${wsUrl}` : 'simulation',
     sessionTimeNow,
+    displayedSampleMs: !supabase || !bufRef.current.length ? null
+      : rawActive
+        ? rawSessionStartUs === null ? null : rawSessionStartUs / 1000 + bufRef.current[bufRef.current.length - 1].t * 1000
+        : selected.diagnostics.latestSampleUs === null ? null : selected.diagnostics.latestSampleUs / 1000,
     laps,
     bestLap,
     bestSectors,

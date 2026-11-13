@@ -351,6 +351,7 @@ export function StatusBar({
   source = 'simulation',
   supabaseMode = 'broadcast',
   freshness = 'fresh',
+  displayedSampleMs = null,
 
   onOpenConfig,
 }: {
@@ -361,6 +362,7 @@ export function StatusBar({
   source?: 'simulation' | 'websocket' | 'supabase'
   supabaseMode?: SupabaseMode
   freshness?: 'no-data' | 'fresh' | 'stale'
+  displayedSampleMs?: number | null
 
   onOpenConfig?: () => void
 }) {
@@ -374,6 +376,10 @@ export function StatusBar({
   const isConn = connectionStatus === 'connected' || connectionStatus === 'subscribed'
   const isErr = connectionStatus === 'disconnected' || connectionStatus === 'error' || connectionStatus === 'misconfigured'
   const isStale = isSb && isConn && freshness !== 'fresh'
+  // The blink timer also refreshes age while the displayed frame is held during an outage.
+  const delayMs = isSb && cur && displayedSampleMs !== null && Number.isFinite(displayedSampleMs)
+    ? Date.now() - displayedSampleMs : null
+  const delayText = delayMs === null ? '—' : delayMs < 0 ? 'CLOCK SKEW' : `~${(delayMs / 1000).toFixed(1)} s`
 
   const statusColor = !isLive
     ? '#c88bff'
@@ -476,6 +482,13 @@ export function StatusBar({
           <span style={{ fontFamily: MONO, fontSize: large ? 14 : 11, color, fontWeight: 700, lineHeight: 1 }}>{val}</span>
         </div>
       ))}
+      <div
+        className="flex items-center gap-1.5 px-3 border-r border-[#1e1e1e] h-full"
+        title="Estimated age of the displayed telemetry, including transport and playback buffering. Car/computer clock differences affect this estimate; it is not measured network latency. Unavailable without a vehicle timestamp."
+      >
+        <span style={{ fontFamily: MONO, fontSize: 7.5, color: '#888888', letterSpacing: '0.1em' }}>DELAY</span>
+        <span style={{ fontFamily: MONO, fontSize: 11, color: delayMs !== null && (delayMs < 0 || freshness === 'stale') ? '#ffaa00' : '#aeaeae', fontWeight: 700, whiteSpace: 'nowrap' }}>{delayText}</span>
+      </div>
       <div style={{ flex: 1 }} />
 
       <div className="flex items-center px-3 h-full border-l border-[#1e1e1e]">
