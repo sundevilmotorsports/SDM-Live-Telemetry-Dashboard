@@ -8,7 +8,7 @@ vi.mock('../live/supabaseBroadcast', () => ({ getSupabaseClient: vi.fn() }))
 const URL = 'https://rwbaahoitfipazbyzlkm.supabase.co'
 const KEY = 'sb_publishable_test_only_not_a_real_key'
 const SESSION = '11111111-1111-4111-8111-111111111111'
-const SELECTION = 'id::text,session_id,device_id,seq,dropped_frames,frames,received_at'
+const SELECTION = 'id::text,session_id,device_id,seq,dropped_frames,frames,sent_at'
 
 function mockQuery(response: { data: unknown; error: { message: string } | null } = { data: [], error: null }) {
   // Only read methods exist on this fake: writes or Realtime calls fail the test.

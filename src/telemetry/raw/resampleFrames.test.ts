@@ -96,7 +96,7 @@ describe('RawBatchSession → resampler pipeline', () => {
     }))
     const page = [{
       id: '1', session_id: SESSION, device_id: 'car-1', seq: 0, dropped_frames: 0,
-      frames, received_at: new Date(T0 + 3000).toISOString(),
+      frames, sent_at: new Date(T0 + 3000).toISOString(),
     }]
     const resampler = new FrameResampler()
     const emitted: ReturnType<typeof at>[] = []

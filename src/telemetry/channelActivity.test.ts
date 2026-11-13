@@ -70,7 +70,7 @@ describe('RawBatchSession → tracker', () => {
       can_id: 1000, extd: false, dlc: 8, ts_ms: T0 + i * 10,
       data: '00' + (1000 + i).toString(16).padStart(4, '0') + '0000000000',
     }))
-    const page = [{ id: '1', session_id: SESSION, device_id: 'car-1', seq: 0, dropped_frames: 0, frames, received_at: new Date(T0 + 3000).toISOString() }]
+    const page = [{ id: '1', session_id: SESSION, device_id: 'car-1', seq: 0, dropped_frames: 0, frames, sent_at: new Date(T0 + 3000).toISOString() }]
     const tracker = new ChannelActivityTracker()
     const session = new RawBatchSession({
       client: { fetchPage: async ({ afterId }) => (afterId === null ? page : []) },

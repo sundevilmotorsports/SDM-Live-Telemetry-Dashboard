@@ -4,7 +4,7 @@ The requirement is **Supabase raw payload → processing in this codebase → da
 
 ## Backend (Supabase project "Cellular Telemetry", `telemetry` schema)
 
-Everything lives in the `telemetry` schema; `public.batches` was a dead PoC and is no longer read. Schema source of truth: `helios-telemetry-devkit/supabase/migrations/20261107000000_telemetry_can_batches.sql` (idempotent, self-contained).
+Everything lives in the `telemetry` schema; `public.batches` was a dead PoC and is no longer read. Schema source of truth: `helios-telemetry-devkit/supabase/migrations/20261107000000_telemetry_can_batches.sql` plus `20261112000000_telemetry_can_batches_sent_at.sql`.
 
 | Object | Role |
 | --- | --- |
@@ -12,7 +12,7 @@ Everything lives in the `telemetry` schema; `public.batches` was a dead PoC and 
 | `telemetry.sessions.created_by` | audit: `auth.uid()` of the user who started the session (null for older rows) |
 | `telemetry.start_session(device_id, name)` | security definer; executable by `authenticated` and `service_role` (not `anon`/public). Where `pm.is_org_member()` exists it must return true, else error 42501. Ends any running session for the device, then opens a new `running` one and returns the row |
 | `telemetry.end_session(id)` | same access and org gate as `start_session`. Idempotent |
-| `telemetry.can_batches` | `id` (bigint cursor), `session_id`, `device_id`, `seq`, `dropped_frames`, `frames` (jsonb, ≤ 4096), `received_at`; unique on `(session_id, device_id, seq)`; composite FK `(session_id, device_id)` → `sessions(id, device_id)` so a batch cannot belong to a session of another device; SELECT for `authenticated` only (org-gated where `pm.is_org_member()` exists), written by the ingest function with the service role |
+| `telemetry.can_batches` | `id` (bigint cursor), `session_id`, `device_id`, `seq`, `dropped_frames`, `frames` (jsonb, ≤ 4096), `sent_at`; unique on `(session_id, device_id, seq)`; composite FK `(session_id, device_id)` → `sessions(id, device_id)` so a batch cannot belong to a session of another device; SELECT for `authenticated` only (org-gated where `pm.is_org_member()` exists), written by the ingest function with the service role |
 
 Row `frames` entries use the `telemetry_format.h` shape:
 
@@ -56,7 +56,7 @@ telemetry.can_batches (one session_id)
 - **Resampling:** one frame is produced per CAN frame, which would shrink the 180-frame chart buffer to a fraction of a second. `FrameResampler` closes each 100 ms bin of device time (`ts_ms`) with the newest merged state in it, so the buffer is a true 18 s window. A bin is emitted when a sample from a later bin arrives, so the newest ≤ 100 ms is pending; bins with no data hold the previous state; a gap longer than the buffer emits only the last 180 bins.
 - **Steady playout:** batches arrive in bursts (one per second from the car, picked up by a once-per-second poll, so sometimes two at once). Drawing each burst immediately makes charts jump once per second. `PlayoutBuffer` queues the 10 Hz frames and releases them on the wall clock at the recorded rate, `PLAYOUT_DELAY_MS` (2 s) behind the newest sample, nudging speed by up to ±5% to hold that cushion. On connect, older history is shown at once; if data stops it holds the last frame (no invented samples); if it falls more than 3 s behind the target (hidden tab, outage) it jumps forward.
 - Frames within each batch are stably ordered by their timestamps. Older/equal samples cannot overwrite newer channel state. Missing signals keep their previous readings; the source freshness banner warns when the stream stops. Per-channel expiry is not implemented.
-- Freshness uses the earlier of local time and accepted batch `received_at`; fetching old records cannot make them fresh. Raw `ts_ms` determines sample ordering and elapsed display time. The schema does not establish device clock synchronization: confirm epoch/boot-relative behavior and clock resets with the transmitter. No HTP `send_timestamp_ms` is invented.
+- Freshness uses the earlier of local time and accepted batch `sent_at`; fetching old records cannot make them fresh. Raw `ts_ms` determines sample ordering and elapsed display time. The schema does not establish device clock synchronization: confirm epoch/boot-relative behavior and clock resets with the transmitter. Batch `sent_at` comes from optional body `sent_ms` (device UTC epoch milliseconds at the stored POST attempt); missing/invalid values default to server time, and old rows were backfilled from their receive time. Upload-to-client delay is estimated as local clock minus `sent_at`, including polling and clock skew, not just network transit or chart playout delay. Frame capture `ts_ms` remains unchanged. Retention also uses `sent_at`, so device clock errors can change when batches expire. No HTP `send_timestamp_ms` is invented.
 - Polling is per open dashboard, so concurrent viewers multiply database/egress load. At higher rates or audience sizes, use an authorized server fan-out or configured Realtime transport. A maximum of 4096 frames per batch is enforced; oversized/malformed batches stop cursor advancement and report an error rather than silently losing data.
 - No synthetic lap timing or position is generated for raw mode. The existing track map needs real lap/GPS logic before it can display measured vehicle position.
 

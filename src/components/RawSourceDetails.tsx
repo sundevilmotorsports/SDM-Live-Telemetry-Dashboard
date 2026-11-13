@@ -20,6 +20,7 @@ export default function RawSourceDetails() {
       {diag && <>
         <span style={textStyle}>{`batch ID ${diag.lastBatchId ?? '—'} · seq ${diag.lastSeq ?? '—'} · transmitter dropped ${diag.droppedFrames} · skipped signals ${diag.skippedSignals} · old samples ${diag.ignoredOld}`}</span>
         <span style={textStyle}>{`last accepted batch ${diag.lastAcceptedMs === null ? '—' : new Date(diag.lastAcceptedMs).toLocaleString()}`}. Historical rows remain stale; fetch time does not make them live.</span>
+        <span style={textStyle}>{`Upload-to-client delay estimate ${diag.uplinkEstimateMs === null ? '—' : `${Math.round(diag.uplinkEstimateMs)} ms`}`}. Includes polling and clock skew; server-time fallback does not measure device delay.</span>
         {diag.lastError && <span style={{ ...textStyle, color: '#ff9966' }}>{diag.lastError}</span>}
       </>}
       <span style={headingStyle}>DASHBOARD MAPPINGS</span>
